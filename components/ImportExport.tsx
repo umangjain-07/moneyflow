@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe, getAutoEmoji } from '../services/storage';
-import { Upload, FileSpreadsheet, CheckCircle, MoveRight, HelpCircle, Save, ArrowRight, ArrowDownLeft, ArrowUpRight, Search, Settings, Download, Heart, Coffee, FileText, Type, Copy, Check, Sparkles, Zap, ChevronDown, Layers, X, BrainCircuit, Activity, Plus, CreditCard, Wallet, TrendingUp, CheckCircle2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle, MoveRight, HelpCircle, Save, ArrowRight, ArrowDownLeft, ArrowUpRight, Search, Settings, Download, Heart, Coffee, FileText, Type, Copy, Check, Sparkles, Zap, ChevronDown, Layers, X, BrainCircuit, Activity, Plus, CreditCard, Wallet, TrendingUp, CheckCircle2, ChevronLeft, AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Account, Category, ImportRule, Transaction, TransactionType } from '../types';
@@ -72,11 +72,6 @@ export const ImportExport: React.FC = () => {
         setSettings(db.getSettings());
       };
       load();
-      const last = localStorage.getItem('last_import_account');
-      if (last) {
-          setTargetAccount(last);
-          loadMapping(last);
-      }
       return subscribe(load);
   }, []);
 
@@ -106,10 +101,15 @@ export const ImportExport: React.FC = () => {
       }
   };
 
-  const handleAccountChange = (id: string) => {
+  const handleAccountSelect = (id: string) => {
       setTargetAccount(id);
-      localStorage.setItem('last_import_account', id);
       loadMapping(id);
+  };
+
+  const clearAccountSelection = () => {
+      setTargetAccount('');
+      setFullData([]);
+      setPastedText('');
   };
 
   const createNewAccount = () => {
@@ -131,7 +131,6 @@ export const ImportExport: React.FC = () => {
           const created = updatedAccounts.find(a => a.name === newAccountName);
           if (created) {
               setTargetAccount(created.id);
-              localStorage.setItem('last_import_account', created.id);
           }
       }, 100);
 
@@ -415,115 +414,131 @@ export const ImportExport: React.FC = () => {
   );
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-20 px-4 md:px-0">
+    <div className="max-w-4xl mx-auto space-y-6 pb-20 px-4 md:px-0">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2"><FileSpreadsheet className="text-emerald-500" /> Statement Import</h1>
           <p className="text-slate-500 text-sm">Convert bank statements into organized data</p>
         </div>
-        {stage === 'UPLOAD' && (
+        {stage === 'UPLOAD' && targetAccount && (
             <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-300 hover:text-white transition-colors">
                 <Download size={18} /> Export CSV
             </button>
         )}
       </div>
 
-      {stage === 'UPLOAD' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
-            <div className="md:col-span-1 space-y-6">
-                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 space-y-4 shadow-xl flex flex-col h-full">
-                    <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 mb-2">
-                        <ArrowRight size={12} className="text-emerald-500" /> Select Bank / Account
-                    </h3>
-                    
-                    <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 max-h-[400px]">
-                        {accounts.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/50 text-center h-full">
-                                <p className="text-slate-400 text-sm font-bold mb-3">No Accounts Found</p>
-                                <button 
-                                    onClick={() => setShowAccountModal(true)}
-                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg"
-                                >
-                                    Create First Account
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                {accounts.map(a => (
-                                    <div 
-                                        key={a.id}
-                                        onClick={() => handleAccountChange(a.id)}
-                                        className={`relative p-4 rounded-xl border cursor-pointer transition-all active:scale-[0.98] group flex items-center justify-between ${targetAccount === a.id ? 'bg-emerald-500/10 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700 hover:bg-slate-900'}`}
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg ${targetAccount === a.id ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'}`}>
-                                                {getAccountIcon(a.type)}
-                                            </div>
-                                            <div>
-                                                <p className={`text-xs font-bold ${targetAccount === a.id ? 'text-emerald-400' : 'text-slate-300'}`}>{a.name}</p>
-                                                <p className="text-[10px] text-slate-500 uppercase">{a.currency}</p>
-                                            </div>
-                                        </div>
-                                        {targetAccount === a.id && <CheckCircle2 size={18} className="text-emerald-500" />}
+      {stage === 'UPLOAD' && !targetAccount && (
+           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+               <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                  <span className="bg-emerald-500 text-slate-950 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+                  Select Target Account
+               </h2>
+               
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                   {accounts.length === 0 ? (
+                        <div className="sm:col-span-2 flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-800 rounded-2xl bg-slate-900/20 text-center">
+                             <AlertCircle size={48} className="text-slate-700 mb-4" />
+                             <p className="text-slate-400 font-bold mb-4">No accounts found</p>
+                             <button onClick={() => setShowAccountModal(true)} className="px-6 py-3 bg-emerald-600 rounded-xl text-white font-bold">Create Account</button>
+                        </div>
+                   ) : (
+                       accounts.map(acc => (
+                           <button
+                               key={acc.id}
+                               onClick={() => handleAccountSelect(acc.id)}
+                               className="group relative flex flex-col items-start p-6 bg-[#0f172a] border border-slate-800 rounded-2xl hover:border-emerald-500/50 hover:bg-slate-900 transition-all text-left shadow-lg active:scale-[0.98]"
+                           >
+                               <div className="flex justify-between w-full mb-4">
+                                    <div className={`p-3 rounded-xl ${acc.type === 'BANK' ? 'bg-blue-500/10 text-blue-400' : acc.type === 'CASH' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-purple-500/10 text-purple-400'}`}>
+                                        {getAccountIcon(acc.type)}
                                     </div>
-                                ))}
+                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-500">
+                                        <CheckCircle2 size={24} />
+                                    </div>
+                               </div>
+                               <h3 className="text-lg font-bold text-slate-200 group-hover:text-white">{acc.name}</h3>
+                               <p className="text-xs text-slate-500 font-mono mt-1">{acc.currency} • {acc.type}</p>
+                           </button>
+                       ))
+                   )}
+                   
+                   {accounts.length > 0 && (
+                       <button
+                            onClick={() => setShowAccountModal(true)}
+                            className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-800 rounded-2xl text-slate-500 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all gap-3 min-h-[160px]"
+                       >
+                           <Plus size={32} />
+                           <span className="font-bold text-sm">Create New Account</span>
+                       </button>
+                   )}
+               </div>
+           </div>
+       )}
+
+      {stage === 'UPLOAD' && targetAccount && (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500">
+            <button 
+                onClick={clearAccountSelection}
+                className="mb-6 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-white transition-colors pl-1"
+            >
+                <ChevronLeft size={16} /> Back to Accounts
+            </button>
+
+            <div className="bg-[#0f172a] rounded-3xl border border-slate-800 overflow-hidden shadow-2xl">
+                <div className="bg-slate-900/50 border-b border-slate-800 p-6 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        {accounts.find(a => a.id === targetAccount) && (
+                            <>
+                                <div className="p-3 bg-slate-800 rounded-xl text-slate-300">
+                                    {getAccountIcon(accounts.find(a => a.id === targetAccount)!.type)}
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Importing into</p>
+                                    <h2 className="text-xl font-bold text-white">{accounts.find(a => a.id === targetAccount)?.name}</h2>
+                                </div>
                             </>
                         )}
                     </div>
-                    
-                    {accounts.length > 0 && (
-                        <button 
-                            onClick={() => setShowAccountModal(true)}
-                            className="w-full py-3 mt-2 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-900/50 transition-all text-xs font-bold flex items-center justify-center gap-2"
-                        >
-                            <Plus size={14} /> Add New Account
-                        </button>
-                    )}
+                    <button onClick={clearAccountSelection} className="text-xs font-bold text-emerald-500 hover:underline">Change</button>
                 </div>
-            </div>
 
-            <div className="md:col-span-2 flex flex-col">
-                <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden flex flex-col flex-1 shadow-2xl">
-                    <div className="flex border-b border-slate-800 bg-slate-900/30">
-                        <button onClick={() => setImportSource('FILE')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'FILE' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
-                            <FileSpreadsheet size={18} /> File Upload
-                        </button>
-                        <button onClick={() => setImportSource('TEXT')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'TEXT' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
-                            <Type size={18} /> Paste Content
-                        </button>
-                    </div>
+                <div className="flex border-b border-slate-800 bg-slate-900/30">
+                    <button onClick={() => setImportSource('FILE')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'FILE' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <FileSpreadsheet size={18} /> File Upload
+                    </button>
+                    <button onClick={() => setImportSource('TEXT')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'TEXT' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Type size={18} /> Paste Content
+                    </button>
+                </div>
 
-                    <div className="p-4 md:p-8 flex-1 flex flex-col">
-                        {importSource === 'FILE' ? (
-                            <div className={`border-2 border-dashed rounded-2xl p-8 md:p-16 flex-1 flex flex-col items-center justify-center text-center transition-all ${targetAccount ? 'border-emerald-500/30 bg-emerald-500/5 cursor-pointer hover:bg-emerald-500/10' : 'border-slate-800 opacity-40 pointer-events-none'}`}>
-                                <input type="file" accept=".csv,.xlsx,.xls" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile} />
-                                <div className="p-5 bg-emerald-500/10 rounded-full mb-4">
-                                    <Upload size={48} className="text-emerald-500 animate-bounce" />
-                                </div>
-                                <p className="font-bold text-slate-200 text-lg">Click to select or drag statement here</p>
-                                <p className="text-xs text-slate-500 mt-2 font-mono">XLSX, XLS, or CSV formats</p>
-                                {!targetAccount && <p className="mt-4 text-xs font-bold text-rose-500 bg-rose-500/10 px-3 py-1 rounded-full">Select an account from the left panel first</p>}
+                <div className="p-4 md:p-8 flex-1 flex flex-col min-h-[400px]">
+                    {importSource === 'FILE' ? (
+                        <div className="border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 cursor-pointer hover:bg-emerald-500/10 rounded-2xl p-8 md:p-16 flex-1 flex flex-col items-center justify-center text-center transition-all relative">
+                            <input type="file" accept=".csv,.xlsx,.xls" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile} />
+                            <div className="p-5 bg-emerald-500/10 rounded-full mb-4">
+                                <Upload size={48} className="text-emerald-500 animate-bounce" />
                             </div>
-                        ) : (
-                            <div className="space-y-4 flex-1 flex flex-col">
-                                <p className="text-xs text-slate-500">Copy table rows from your Bank PDF and paste them below.</p>
-                                <textarea 
-                                    className="w-full flex-1 min-h-[300px] bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs font-mono text-emerald-400 outline-none focus:border-emerald-500/50 resize-none placeholder:text-slate-800"
-                                    placeholder="01/01/24    Amazon Marketplace  -45.00"
-                                    value={pastedText}
-                                    onChange={e => setPastedText(e.target.value)}
-                                    disabled={!targetAccount}
-                                />
-                                <button 
-                                    onClick={handleTextImport}
-                                    disabled={!pastedText.trim() || !targetAccount}
-                                    className="w-full py-4 bg-emerald-600 rounded-2xl text-white font-bold hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/40 disabled:opacity-20 flex items-center justify-center gap-2"
-                                >
-                                    <Zap size={18} /> Auto-Detect Patterns
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                            <p className="font-bold text-slate-200 text-lg">Click to select or drag statement here</p>
+                            <p className="text-xs text-slate-500 mt-2 font-mono">XLSX, XLS, or CSV formats</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-4 flex-1 flex flex-col">
+                            <p className="text-xs text-slate-500">Copy table rows from your Bank PDF and paste them below.</p>
+                            <textarea 
+                                className="w-full flex-1 min-h-[300px] bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs font-mono text-emerald-400 outline-none focus:border-emerald-500/50 resize-none placeholder:text-slate-800"
+                                placeholder="01/01/24    Amazon Marketplace  -45.00"
+                                value={pastedText}
+                                onChange={e => setPastedText(e.target.value)}
+                            />
+                            <button 
+                                onClick={handleTextImport}
+                                disabled={!pastedText.trim()}
+                                className="w-full py-4 bg-emerald-600 rounded-2xl text-white font-bold hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/40 disabled:opacity-20 flex items-center justify-center gap-2"
+                            >
+                                <Zap size={18} /> Auto-Detect Patterns
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
