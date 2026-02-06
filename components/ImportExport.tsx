@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe, getAutoEmoji } from '../services/storage';
-import { Upload, FileSpreadsheet, CheckCircle, MoveRight, HelpCircle, Save, ArrowRight, ArrowDownLeft, ArrowUpRight, Search, Settings, Download, Heart, Coffee, FileText, Type, Copy, Check, Sparkles, Zap, ChevronDown, Layers, X, BrainCircuit, Activity, Plus } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle, MoveRight, HelpCircle, Save, ArrowRight, ArrowDownLeft, ArrowUpRight, Search, Settings, Download, Heart, Coffee, FileText, Type, Copy, Check, Sparkles, Zap, ChevronDown, Layers, X, BrainCircuit, Activity, Plus, CreditCard, Wallet, TrendingUp, CheckCircle2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Account, Category, ImportRule, Transaction, TransactionType } from '../types';
@@ -397,6 +397,12 @@ export const ImportExport: React.FC = () => {
 
   const groupNames = useMemo(() => Array.from(new Set(categories.map(c => c.group))).sort(), [categories]);
 
+  const getAccountIcon = (type: string) => {
+      if (type === 'INVESTMENT') return <TrendingUp size={18} />;
+      if (type === 'CASH') return <Wallet size={18} />;
+      return <CreditCard size={18} />;
+  };
+
   if (stage === 'SUCCESS') return (
     <div className="flex flex-col items-center justify-center h-[70vh] animate-in zoom-in p-4 text-center">
         <div className="bg-emerald-500/10 p-8 rounded-full mb-6 ring-1 ring-emerald-500/20 shadow-2xl shadow-emerald-500/10">
@@ -425,33 +431,54 @@ export const ImportExport: React.FC = () => {
       {stage === 'UPLOAD' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
             <div className="md:col-span-1 space-y-6">
-                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 space-y-4 shadow-xl">
-                    <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                        <ArrowRight size={12} className="text-emerald-500" /> Target
+                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 space-y-4 shadow-xl flex flex-col h-full">
+                    <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 mb-2">
+                        <ArrowRight size={12} className="text-emerald-500" /> Select Bank / Account
                     </h3>
-                    <div className="relative">
-                        <label className="text-xs font-bold text-slate-400 block mb-2">Assign to Account</label>
-                        <div className="flex gap-2">
-                            <div className="relative flex-1">
-                                <select 
-                                    className="w-full appearance-none bg-slate-950 p-4 rounded-xl text-white border border-slate-800 outline-none focus:border-emerald-500/50 transition-colors cursor-pointer"
-                                    value={targetAccount}
-                                    onChange={e => handleAccountChange(e.target.value)}
+                    
+                    <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 max-h-[400px]">
+                        {accounts.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/50 text-center h-full">
+                                <p className="text-slate-400 text-sm font-bold mb-3">No Accounts Found</p>
+                                <button 
+                                    onClick={() => setShowAccountModal(true)}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg"
                                 >
-                                    <option value="">-- Choose Account --</option>
-                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>)}
-                                </select>
-                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                                    Create First Account
+                                </button>
                             </div>
-                            <button 
-                                onClick={() => setShowAccountModal(true)}
-                                className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-white p-4 rounded-xl transition-all"
-                                title="Create New Account"
-                            >
-                                <Plus size={18} />
-                            </button>
-                        </div>
+                        ) : (
+                            <>
+                                {accounts.map(a => (
+                                    <div 
+                                        key={a.id}
+                                        onClick={() => handleAccountChange(a.id)}
+                                        className={`relative p-4 rounded-xl border cursor-pointer transition-all active:scale-[0.98] group flex items-center justify-between ${targetAccount === a.id ? 'bg-emerald-500/10 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700 hover:bg-slate-900'}`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`p-2 rounded-lg ${targetAccount === a.id ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'}`}>
+                                                {getAccountIcon(a.type)}
+                                            </div>
+                                            <div>
+                                                <p className={`text-xs font-bold ${targetAccount === a.id ? 'text-emerald-400' : 'text-slate-300'}`}>{a.name}</p>
+                                                <p className="text-[10px] text-slate-500 uppercase">{a.currency}</p>
+                                            </div>
+                                        </div>
+                                        {targetAccount === a.id && <CheckCircle2 size={18} className="text-emerald-500" />}
+                                    </div>
+                                ))}
+                            </>
+                        )}
                     </div>
+                    
+                    {accounts.length > 0 && (
+                        <button 
+                            onClick={() => setShowAccountModal(true)}
+                            className="w-full py-3 mt-2 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-900/50 transition-all text-xs font-bold flex items-center justify-center gap-2"
+                        >
+                            <Plus size={14} /> Add New Account
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -475,6 +502,7 @@ export const ImportExport: React.FC = () => {
                                 </div>
                                 <p className="font-bold text-slate-200 text-lg">Click to select or drag statement here</p>
                                 <p className="text-xs text-slate-500 mt-2 font-mono">XLSX, XLS, or CSV formats</p>
+                                {!targetAccount && <p className="mt-4 text-xs font-bold text-rose-500 bg-rose-500/10 px-3 py-1 rounded-full">Select an account from the left panel first</p>}
                             </div>
                         ) : (
                             <div className="space-y-4 flex-1 flex flex-col">
