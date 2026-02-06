@@ -462,5 +462,4 @@ class StorageService {
       };
   }
 }
-
 export const db = new StorageService();

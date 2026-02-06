@@ -139,7 +139,6 @@ export const Auth: React.FC = () => {
                       </div>
                   </div>
               )}
-
               {error && <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-500 text-sm text-center animate-in shake">{error}</div>}
 
               <button 
