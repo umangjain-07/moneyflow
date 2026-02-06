@@ -9,6 +9,7 @@ export const Auth: React.FC = () => {
   const [error, setError] = useState('');
   const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [syncType, setSyncType] = useState(db.getSyncConfig().type);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +60,12 @@ export const Auth: React.FC = () => {
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">MoneyFlow</h1>
           <p className="text-slate-400">Your personal wealth operating system</p>
+          {syncType === 'LOCAL' && (
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 animate-in fade-in slide-in-from-top-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Offline / Local Mode</span>
+              </div>
+          )}
         </div>
 
         <div className="bg-[#0f172a] border border-slate-800 rounded-2xl p-8 shadow-2xl animate-in slide-in-from-bottom-5 duration-500">
@@ -71,22 +78,23 @@ export const Auth: React.FC = () => {
              <button 
                 type="button"
                 onClick={handleGoogleAuth}
-                disabled={isCloudLoading || isAuthLoading}
-                className="w-full bg-white text-slate-900 font-semibold py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors disabled:opacity-70 disabled:cursor-wait"
+                disabled={syncType === 'LOCAL' || isCloudLoading || isAuthLoading}
+                className={`w-full bg-white text-slate-900 font-semibold py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${syncType === 'LOCAL' ? 'opacity-50 grayscale' : ''}`}
+                title={syncType === 'LOCAL' ? "Google Cloud Auth unavailable in Local Mode" : ""}
              >
                 {isCloudLoading ? <Loader2 className="animate-spin" size={20} /> : <Chrome size={20} className="text-blue-500" />}
-                {isCloudLoading ? 'Connecting...' : 'Sign in with Google'}
+                {syncType === 'LOCAL' ? 'Cloud Sync Unavailable' : (isCloudLoading ? 'Connecting...' : 'Sign in with Google')}
              </button>
              
              <div className="relative flex items-center py-2">
                  <div className="flex-grow border-t border-slate-800"></div>
-                 <span className="flex-shrink-0 mx-4 text-slate-600 text-xs uppercase">Or with email / local</span>
+                 <span className="flex-shrink-0 mx-4 text-slate-600 text-xs uppercase">{syncType === 'LOCAL' ? 'Local Account' : 'Or with email'}</span>
                  <div className="flex-grow border-t border-slate-800"></div>
              </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Username / Email</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Username {syncType === 'FIREBASE' ? '/ Email' : ''}</label>
                 <div className="relative group">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-emerald-500 transition-colors" size={18} />
                   <input 
