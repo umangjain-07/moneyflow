@@ -1,0 +1,5 @@
+{
+  "name": "MoneyFlow",
+  "description": "A privacy-focused, offline-capable money manager for tracking expenses, managing accounts, and analyzing financial habits with CSV import capabilities.",
+  "requestFramePermissions": []
+}
