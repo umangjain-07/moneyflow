@@ -74,12 +74,7 @@ class StorageService {
 
   constructor() { this.initFirebase(); }
   initFirebase() {
-      // Validate API Key to prevent broken Firebase initialization with placeholders
-      if (!FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.includes('your_api_key') || FIREBASE_CONFIG.apiKey.length < 10) {
-        console.warn("Firebase config invalid or missing. Switching to Local Mode.");
-        return;
-      }
-
+      if (!FIREBASE_CONFIG.apiKey) return;
       try {
           const app = initializeApp(FIREBASE_CONFIG);
           firebaseAuth = getAuth(app);
@@ -92,8 +87,6 @@ class StorageService {
           });
       } catch (e) {
           console.error("Firebase Init Failed:", e);
-          firebaseAuth = null;
-          firestore = null;
       }
   }
   private setSession(id: string) { localStorage.setItem('moneyflow_session', id); notify(); }
@@ -153,7 +146,7 @@ class StorageService {
   }
 
   async authenticateWithGoogle() { 
-      if (!firebaseAuth) throw new Error("Database not configured. Local mode only.");
+      if (!firebaseAuth) throw new Error("Database not configured");
       const p = new GoogleAuthProvider(); 
       const r = await signInWithPopup(firebaseAuth, p); 
       this.setSession(r.user.uid); 
@@ -462,4 +455,5 @@ class StorageService {
       };
   }
 }
+
 export const db = new StorageService();
