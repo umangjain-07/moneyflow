@@ -3,7 +3,7 @@ import { Account, Category, Transaction, AppSettings, User, ImportRule, SyncConf
 // @ts-ignore
 import { initializeApp } from 'firebase/app';
 // @ts-ignore
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 // @ts-ignore
 import { getFirestore, doc, setDoc, getDoc, collection } from 'firebase/firestore';
 
@@ -70,6 +70,8 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 let firestore: any = null, firebaseAuth: any = null;
 
 class StorageService {
+  private pushTimer: any = null;
+
   constructor() { this.initFirebase(); }
   initFirebase() {
       if (!FIREBASE_CONFIG.apiKey) return;
@@ -83,7 +85,9 @@ class StorageService {
                   await this.pullFromCloud();
               }
           });
-      } catch (e) {}
+      } catch (e) {
+          console.error("Firebase Init Failed:", e);
+      }
   }
   private setSession(id: string) { localStorage.setItem('moneyflow_session', id); notify(); }
   private getSession() { return localStorage.getItem('moneyflow_session'); }
@@ -114,13 +118,99 @@ class StorageService {
       notify();
   }
 
-  private scheduleCloudPush() { if (firestore && this.getSession()) setTimeout(() => this.pushToCloud(), 2000); }
-  async pushToCloud() { const id = this.getSession(); if (id && firestore) await setDoc(doc(firestore, 'users', id), { ...this.getFullState(), updatedAt: new Date().toISOString() }); }
-  async pullFromCloud() { const id = this.getSession(); if (id && firestore) { const s = await getDoc(doc(firestore, 'users', id)); if (s.exists()) this.restoreFullState(s.data()); } }
-  async authenticateWithGoogle() { const p = new GoogleAuthProvider(); const r = await signInWithPopup(firebaseAuth, p); this.setSession(r.user.uid); await this.pullFromCloud(); return true; }
-  async logout() { if (firebaseAuth) await signOut(firebaseAuth); localStorage.removeItem('moneyflow_session'); notify(); }
-  login(u: string, p: string) { this.setSession(u); return true; }
-  register(u: string, p: string) { this.setSession(u); this.set('settings', DEFAULT_SETTINGS); return true; }
+  private scheduleCloudPush() { 
+      if (firestore && this.getSession()) {
+          // Debounce writes to avoid spamming Firestore on every keystroke
+          if (this.pushTimer) clearTimeout(this.pushTimer);
+          this.pushTimer = setTimeout(() => this.pushToCloud(), 3000); 
+      }
+  }
+
+  async pushToCloud() { 
+      const id = this.getSession(); 
+      if (id && firestore) {
+          try {
+            await setDoc(doc(firestore, 'users', id), { ...this.getFullState(), updatedAt: new Date().toISOString() }, { merge: true }); 
+          } catch(e) { console.error("Cloud Push Failed", e); }
+      }
+  }
+
+  async pullFromCloud() { 
+      const id = this.getSession(); 
+      if (id && firestore) { 
+          try {
+            const s = await getDoc(doc(firestore, 'users', id)); 
+            if (s.exists()) this.restoreFullState(s.data()); 
+          } catch(e) { console.error("Cloud Pull Failed", e); }
+      } 
+  }
+
+  async authenticateWithGoogle() { 
+      if (!firebaseAuth) throw new Error("Database not configured");
+      const p = new GoogleAuthProvider(); 
+      const r = await signInWithPopup(firebaseAuth, p); 
+      this.setSession(r.user.uid); 
+      await this.pullFromCloud(); 
+      return true; 
+  }
+
+  async logout() { 
+      if (firebaseAuth) await signOut(firebaseAuth); 
+      localStorage.removeItem('moneyflow_session'); 
+      notify(); 
+  }
+
+  async login(u: string, p: string): Promise<{success: boolean, error?: string}> { 
+      if (firebaseAuth) {
+          try {
+             // Heuristic: If it doesn't look like an email, treat as username@moneyflow.app
+             // This keeps the MVP simple while using robust Email/Pass auth
+             let email = u;
+             if (!email.includes('@')) email = `${u}@moneyflow.app`;
+
+             const cred = await signInWithEmailAndPassword(firebaseAuth, email, p);
+             this.setSession(cred.user.uid);
+             await this.pullFromCloud();
+             return { success: true };
+          } catch(e: any) {
+             let msg = "Login failed.";
+             if(e.code === 'auth/invalid-credential') msg = "Incorrect password or user not found.";
+             if(e.code === 'auth/invalid-email') msg = "Invalid username format.";
+             return { success: false, error: msg };
+          }
+      } else {
+          // Local Fallback
+          this.setSession(u); 
+          return { success: true }; 
+      }
+  }
+
+  async register(u: string, p: string): Promise<{success: boolean, error?: string}> { 
+      if (firebaseAuth) {
+          try {
+             let email = u;
+             if (!email.includes('@')) email = `${u}@moneyflow.app`;
+
+             const cred = await createUserWithEmailAndPassword(firebaseAuth, email, p);
+             this.setSession(cred.user.uid);
+             // Initialize default data for new user in cloud
+             this.set('settings', DEFAULT_SETTINGS, true); 
+             await this.pushToCloud();
+             return { success: true };
+          } catch(e: any) {
+             let msg = "Registration failed.";
+             if(e.code === 'auth/email-already-in-use') msg = "Username already taken.";
+             if(e.code === 'auth/weak-password') msg = "Password is too weak.";
+             return { success: false, error: msg };
+          }
+      } else {
+          // Local Fallback
+          this.setSession(u); 
+          this.set('settings', DEFAULT_SETTINGS); 
+          return { success: true };
+      }
+  }
+
   isLoggedIn() { return !!this.getSession(); }
   getCurrentUser() { return { username: this.getSession() || 'User', id: this.getSession() || '', photoURL: undefined as string | undefined }; }
   getSettings() { return this.get<AppSettings>('settings', DEFAULT_SETTINGS); }
