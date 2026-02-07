@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
-import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend, Cell } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -57,14 +57,10 @@ export const Dashboard: React.FC = () => {
     if (transactions.length < 3 || isAiLoading) return;
     
     const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      // Silently skip if no API key is configured to avoid errors
-      return;
-    }
+    if (!apiKey) return;
 
     setIsAiLoading(true);
     try {
-      // Small delay to ensure network is ready
       await new Promise(resolve => setTimeout(resolve, 800));
       
       const ai = new GoogleGenAI({ apiKey });
@@ -122,12 +118,9 @@ export const Dashboard: React.FC = () => {
       const parsed = JSON.parse(text);
       setAiInsights(parsed.insights || []);
     } catch (error: any) {
-      // Only log strictly necessary errors, avoid flooding console for network interruptions
       if (!error.message?.includes('Rpc failed')) {
          console.error("AI Insight Error:", error);
       }
-      
-      // provide meaningful fallback for user
       if (aiInsights.length === 0) {
           setAiInsights([{
             title: "Analysis Suspended",
@@ -152,7 +145,6 @@ export const Dashboard: React.FC = () => {
     return () => unsubscribe();
   }, [historyRange]);
 
-  // Generate AI insights once on load if data exists
   useEffect(() => {
     if (transactions.length >= 3 && aiInsights.length === 0 && !isAiLoading) {
       generateAiInsights();
@@ -184,20 +176,20 @@ export const Dashboard: React.FC = () => {
 
   const emergencyStats = useMemo(() => {
       const emergencyMonths = settings.emergencyFundTargetMonths || 6;
-      const lookbackMonths = 12; // Standard 1 year lookback for burn average
+      const lookbackMonths = 12; 
       const now = new Date();
       const lookbackDate = new Date();
       lookbackDate.setMonth(lookbackDate.getMonth() - lookbackMonths);
       
+      let totalNeeds = 0, totalWants = 0, totalInvest = 0;
       let oldestTxDate = now;
       if (transactions.length > 0) {
           const earliest = transactions.reduce((acc, t) => t.date < acc ? t.date : acc, transactions[0].date);
           oldestTxDate = new Date(earliest);
       }
-      const monthsWithData = (now.getFullYear() - oldestTxDate.getFullYear()) * 12 + (now.getMonth() - oldestTxDate.getMonth()) + 1;
-      const effectiveDivisor = Math.max(1, Math.min(monthsWithData, lookbackMonths));
+      const monthsWithData = Math.max(1, (now.getFullYear() - oldestTxDate.getFullYear()) * 12 + (now.getMonth() - oldestTxDate.getMonth()) + 1);
+      const effectiveDivisor = Math.min(monthsWithData, lookbackMonths);
       
-      let totalNeeds = 0, totalWants = 0, totalInvest = 0;
       transactions.forEach(t => {
           const tDate = new Date(t.date);
           if (tDate >= lookbackDate) {
@@ -219,20 +211,36 @@ export const Dashboard: React.FC = () => {
       const avgWants = totalWants / effectiveDivisor;
       const avgInvest = totalInvest / effectiveDivisor;
       
+      // Calculate Buckets
       const targetBasic = avgNeeds * emergencyMonths;
       const targetComfort = (avgNeeds + avgWants) * emergencyMonths;
       const targetThriving = (avgNeeds + avgWants + avgInvest) * emergencyMonths;
       
-      let liquidCash = health.liquidAssets;
+      const cycleSize = Math.max(1, targetThriving);
+      const totalLiquidCash = health.liquidAssets;
       
-      const filledBasic = Math.min(liquidCash, targetBasic);
-      const filledComfort = Math.max(0, Math.min(liquidCash - targetBasic, targetComfort - targetBasic));
-      const filledThriving = Math.max(0, Math.min(liquidCash - targetComfort, targetThriving - targetComfort));
+      // Cyclic Logic:
+      // Level 0: 0 -> Thrive Target (filling first time)
+      // Level 1: Thrive -> 2x Thrive (filling surplus)
+      const level = Math.floor(totalLiquidCash / cycleSize); 
+      const currentCycleAmount = totalLiquidCash % cycleSize;
+      
+      // If we are exactly at 100% or 200%, the modulo is 0. 
+      // We want to show a full bar for "Level Complete".
+      const isExactMultiple = totalLiquidCash > 0 && currentCycleAmount === 0;
+      const visualAmount = isExactMultiple ? cycleSize : currentCycleAmount;
+      const displayLevel = isExactMultiple ? level : level; 
+
+      const filledBasic = Math.min(visualAmount, targetBasic);
+      const filledComfort = Math.max(0, Math.min(visualAmount - targetBasic, targetComfort - targetBasic));
+      const filledThriving = Math.max(0, Math.min(visualAmount - targetComfort, targetThriving - targetComfort));
       
       return { 
-          liquidCash, 
+          liquidCash: totalLiquidCash, 
           targets: { basic: targetBasic, comfort: targetComfort, thriving: targetThriving }, 
-          filled: { basic: filledBasic, comfort: filledComfort, thriving: filledThriving } 
+          filled: { basic: filledBasic, comfort: filledComfort, thriving: filledThriving },
+          level: displayLevel,
+          isSurplus: displayLevel > 0
       };
   }, [transactions, categories, accounts, settings, health.liquidAssets]);
 
@@ -240,12 +248,13 @@ export const Dashboard: React.FC = () => {
       const { income, expense, invested } = currentMonthStats;
       if (income === 0) return null;
       let needs = 0, wants = 0;
-      const now = new Date();
-      const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
       transactions.forEach(t => {
+        // ... (calculation logic same as before)
         const parts = t.date.split(/[^0-9]/);
         if(parts.length >= 2) {
              const txKey = `${parseInt(parts[0])}-${String(parseInt(parts[1])).padStart(2,'0')}`;
+             const now = new Date();
+             const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
              if (txKey === currentKey && t.type === 'EXPENSE') {
                  const cat = categories.find(c => c.id === t.categoryId);
                  const acc = accounts.find(a => a.id === t.accountId);
@@ -386,50 +395,94 @@ export const Dashboard: React.FC = () => {
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             
-            {/* Card 1: Emergency Fund */}
-            <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col justify-between hover:border-slate-700 hover:shadow-xl transition-all duration-300 group">
-                <div className="flex justify-between items-center mb-6">
+            {/* Card 1: Emergency Fund (Prestige Mode) */}
+            <div className={`p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 group overflow-hidden relative ${emergencyStats.isSurplus ? 'bg-gradient-to-br from-[#0f172a] to-emerald-900/10 border-emerald-500/30' : 'bg-[#0f172a]/80 border-slate-800 hover:border-slate-700'}`}>
+                {emergencyStats.isSurplus && <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none"></div>}
+                
+                <div className="flex justify-between items-center mb-6 relative z-10">
                     <div>
-                        <h4 className="font-bold text-slate-200 group-hover:text-emerald-400 transition-colors">Emergency Fund</h4>
-                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-tighter mt-1">Months of Resilience</p>
+                        <div className="flex items-center gap-2">
+                            <h4 className={`font-bold transition-colors ${emergencyStats.isSurplus ? 'text-emerald-300' : 'text-slate-200'}`}>Emergency Fund</h4>
+                            {emergencyStats.isSurplus && (
+                                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase rounded-md shadow-lg shadow-emerald-500/20 flex items-center gap-1 animate-pulse">
+                                    <Award size={10} fill="currentColor" />
+                                    Level {emergencyStats.level}
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-tighter mt-1">{emergencyStats.isSurplus ? 'Surplus Protection Mode' : 'Building Security Base'}</p>
                     </div>
-                    <div className="px-3 py-1 bg-slate-900 rounded-full border border-slate-800 shadow-inner">
-                        <span className="text-[10px] font-black text-slate-400">TARGET: {settings.emergencyFundTargetMonths || 6}M</span>
+                    <div className="text-right">
+                         <span className={`text-xl font-bold ${emergencyStats.isSurplus ? 'text-emerald-400' : 'text-white'}`}>
+                             {Math.floor((emergencyStats.liquidCash / emergencyStats.targets.thriving) * 100)}%
+                         </span>
+                         <span className="text-[10px] font-black text-slate-500 block">FUNDED</span>
                     </div>
                 </div>
                 
-                <div className="mb-6">
+                <div className="mb-6 relative z-10">
                      <div className="h-10 flex rounded-xl overflow-hidden border border-slate-900 bg-slate-950 p-1 relative shadow-inner">
-                         <div className="h-full bg-emerald-900/20 relative rounded-l-lg" style={{width: `${(emergencyStats.targets.basic / emergencyStats.targets.thriving) * 100}%`}}>
-                             <div className="absolute top-0 left-0 h-full bg-emerald-500 rounded-l-lg transition-all duration-1000 ease-out" style={{width: `${(emergencyStats.filled.basic / emergencyStats.targets.basic) * 100}%`}}></div>
+                         {/* BASIC BAR */}
+                         <div className={`h-full relative rounded-l-lg ${emergencyStats.isSurplus ? 'bg-emerald-500/30' : 'bg-emerald-900/20'}`} style={{width: `${(emergencyStats.targets.basic / emergencyStats.targets.thriving) * 100}%`}}>
+                             <div 
+                                className={`absolute top-0 left-0 h-full rounded-l-lg transition-all duration-1000 ease-out bg-emerald-500 ${emergencyStats.isSurplus ? 'animate-[pulse_3s_infinite]' : ''}`} 
+                                style={{width: `${(emergencyStats.filled.basic / emergencyStats.targets.basic) * 100}%`}}
+                             >
+                                 {emergencyStats.isSurplus && <div className="absolute inset-0 bg-white/20 animate-shimmer" style={{backgroundSize: '200% 100%'}}></div>}
+                             </div>
                          </div>
-                         <div className="h-full bg-amber-900/20 relative mx-0.5" style={{width: `${((emergencyStats.targets.comfort - emergencyStats.targets.basic) / emergencyStats.targets.thriving) * 100}%`}}>
-                             <div className="absolute top-0 left-0 h-full bg-amber-500 transition-all duration-1000 ease-out" style={{width: `${(emergencyStats.filled.comfort / Math.max(1, emergencyStats.targets.comfort - emergencyStats.targets.basic)) * 100}%`}}></div>
+                         {/* COMFORT BAR */}
+                         <div className={`h-full relative mx-0.5 ${emergencyStats.isSurplus ? 'bg-amber-500/30' : 'bg-amber-900/20'}`} style={{width: `${((emergencyStats.targets.comfort - emergencyStats.targets.basic) / emergencyStats.targets.thriving) * 100}%`}}>
+                             <div 
+                                className={`absolute top-0 left-0 h-full rounded-sm transition-all duration-1000 ease-out bg-amber-500 ${emergencyStats.isSurplus ? 'animate-[pulse_3s_infinite_200ms]' : ''}`} 
+                                style={{width: `${(emergencyStats.filled.comfort / Math.max(1, emergencyStats.targets.comfort - emergencyStats.targets.basic)) * 100}%`}}
+                             >
+                                 {emergencyStats.isSurplus && <div className="absolute inset-0 bg-white/20 animate-shimmer" style={{backgroundSize: '200% 100%'}}></div>}
+                             </div>
                          </div>
-                         <div className="h-full bg-purple-900/20 relative rounded-r-lg" style={{width: `${((emergencyStats.targets.thriving - emergencyStats.targets.comfort) / emergencyStats.targets.thriving) * 100}%`}}>
-                             <div className="absolute top-0 left-0 h-full bg-purple-500 rounded-r-lg transition-all duration-1000 ease-out" style={{width: `${(emergencyStats.filled.thriving / Math.max(1, emergencyStats.targets.thriving - emergencyStats.targets.comfort)) * 100}%`}}></div>
+                         {/* THRIVE BAR */}
+                         <div className={`h-full relative rounded-r-lg ${emergencyStats.isSurplus ? 'bg-purple-500/30' : 'bg-purple-900/20'}`} style={{width: `${((emergencyStats.targets.thriving - emergencyStats.targets.comfort) / emergencyStats.targets.thriving) * 100}%`}}>
+                             <div 
+                                className={`absolute top-0 left-0 h-full rounded-r-lg transition-all duration-1000 ease-out bg-purple-500 ${emergencyStats.isSurplus ? 'animate-[pulse_3s_infinite_400ms]' : ''}`} 
+                                style={{width: `${(emergencyStats.filled.thriving / Math.max(1, emergencyStats.targets.thriving - emergencyStats.targets.comfort)) * 100}%`}}
+                             >
+                                 {emergencyStats.isSurplus && <div className="absolute inset-0 bg-white/20 animate-shimmer" style={{backgroundSize: '200% 100%'}}></div>}
+                             </div>
                          </div>
                      </div>
-                     <div className="flex justify-between text-[10px] font-mono text-slate-600 mt-2">
-                         <span>$0 BASE</span>
-                         <span>THRIVE {formatMoney(emergencyStats.targets.thriving)}</span>
+                     
+                     <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-2">
+                         <span>{emergencyStats.isSurplus ? `LEVEL ${emergencyStats.level} COMPLETE` : '$0 START'}</span>
+                         <span>{emergencyStats.isSurplus ? `FILLING LEVEL ${emergencyStats.level + 1}` : `TARGET ${formatMoney(emergencyStats.targets.thriving)}`}</span>
                      </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                    <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800 text-center">
+                <div className="grid grid-cols-3 gap-2 relative z-10">
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${emergencyStats.isSurplus ? 'bg-emerald-500/20 border-emerald-500/40' : 'bg-slate-900/50 border-slate-800'}`}>
                         <div className="text-[9px] font-black uppercase text-emerald-500 mb-0.5">Basic</div>
                         <div className="text-sm font-black text-white">{Math.floor((emergencyStats.filled.basic / Math.max(1, emergencyStats.targets.basic)) * 100)}%</div>
                     </div>
-                    <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800 text-center">
-                        <div className="text-[9px] font-black uppercase text-amber-500 mb-0.5">Comf</div>
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${emergencyStats.isSurplus ? 'bg-amber-500/20 border-amber-500/40' : 'bg-slate-900/50 border-slate-800'}`}>
+                        <div className="text-[9px] font-black uppercase text-amber-500 mb-0.5">Comfort</div>
                         <div className="text-sm font-black text-white">{Math.floor((emergencyStats.filled.comfort / Math.max(1, emergencyStats.targets.comfort - emergencyStats.targets.basic)) * 100)}%</div>
                     </div>
-                    <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800 text-center">
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${emergencyStats.isSurplus ? 'bg-purple-500/20 border-purple-500/40' : 'bg-slate-900/50 border-slate-800'}`}>
                         <div className="text-[9px] font-black uppercase text-purple-400 mb-0.5">Thrive</div>
                         <div className="text-sm font-black text-white">{Math.floor((emergencyStats.filled.thriving / Math.max(1, emergencyStats.targets.thriving - emergencyStats.targets.comfort)) * 100)}%</div>
                     </div>
                 </div>
+                
+                {/* Global shimmer style for reuse */}
+                <style>{`
+                    @keyframes shimmer {
+                        0% { background-position: 200% 0; }
+                        100% { background-position: -200% 0; }
+                    }
+                    .animate-shimmer {
+                        background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
+                        animation: shimmer 2s infinite linear;
+                    }
+                `}</style>
             </div>
 
             {/* Card 2: 50/30/20 Rule */}
