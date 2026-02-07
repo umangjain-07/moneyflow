@@ -276,7 +276,7 @@ export const Dashboard: React.FC = () => {
     <div className="space-y-6 md:space-y-10 pb-4">
       
       {/* 1. RELOADED NET WORTH HEADER */}
-      <div className="border-b border-slate-800/50 pb-10 relative overflow-hidden">
+      <div className="border-b border-slate-800/50 pb-10 relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-700">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 relative z-10">
               <div className="w-full md:w-auto">
                   <div className="flex items-center gap-2 mb-1">
@@ -371,7 +371,7 @@ export const Dashboard: React.FC = () => {
                         ))
                     ) : (
                         aiInsights.map((insight, idx) => (
-                            <div key={idx} className="group/insight p-5 rounded-2xl bg-slate-950/50 border border-slate-800 hover:border-emerald-500/30 transition-all duration-500">
+                            <div key={idx} className="group/insight p-5 rounded-2xl bg-slate-950/50 border border-slate-800 hover:border-emerald-500/30 transition-all duration-500 animate-slide-up" style={{animationDelay: `${idx * 100}ms`}}>
                                 <div className="flex items-center gap-2 mb-3">
                                     {insight.type === 'TIP' && <Lightbulb size={16} className="text-amber-400" />}
                                     {insight.type === 'WARNING' && <AlertTriangle size={16} className="text-rose-400" />}
@@ -396,7 +396,7 @@ export const Dashboard: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             
             {/* Card 1: Emergency Fund (Prestige Mode) */}
-            <div className={`p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 group overflow-hidden relative ${emergencyStats.isSurplus ? 'bg-gradient-to-br from-[#0f172a] to-emerald-900/10 border-emerald-500/30' : 'bg-[#0f172a]/80 border-slate-800 hover:border-slate-700'}`}>
+            <div className={`p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 group overflow-hidden relative ${emergencyStats.isSurplus ? 'bg-gradient-to-br from-[#0f172a] to-emerald-900/10 border-emerald-500/30' : 'bg-[#0f172a]/80 border-slate-800 hover:border-slate-700'} animate-slide-up`} style={{animationDelay: '100ms'}}>
                 {emergencyStats.isSurplus && <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none"></div>}
                 
                 <div className="flex justify-between items-center mb-6 relative z-10">
@@ -486,7 +486,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Card 2: 50/30/20 Rule */}
-            <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col justify-between hover:border-slate-700 hover:shadow-xl transition-all duration-300 group">
+            <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col justify-between hover:border-slate-700 hover:shadow-xl transition-all duration-300 group animate-slide-up" style={{animationDelay: '200ms'}}>
                 <div className="flex justify-between items-center mb-6">
                     <h4 className="font-bold text-slate-200 group-hover:text-blue-400 transition-colors">Burn Allocation</h4>
                     <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-inner">Monthly Flow</span>
@@ -530,7 +530,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
              {/* Card 3: Wealth Velocity */}
-             <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col relative overflow-hidden hover:border-purple-500/40 hover:shadow-xl transition-all duration-300 group">
+             <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col relative overflow-hidden hover:border-purple-500/40 hover:shadow-xl transition-all duration-300 group animate-slide-up" style={{animationDelay: '300ms'}}>
                  <div className="flex justify-between items-start mb-6 relative z-10">
                     <div>
                         <h4 className="font-bold text-slate-200 group-hover:text-purple-400 transition-colors">Wealth Velocity</h4>
@@ -648,10 +648,10 @@ export const Dashboard: React.FC = () => {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {goals.map(goal => {
+              {goals.map((goal, idx) => {
                   const percent = Math.min(100, (goal.currentAmount / goal.targetAmount) * 100);
                   return (
-                      <div key={goal.id} className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 group relative hover:border-slate-600 shadow-2xl transition-all duration-300">
+                      <div key={goal.id} className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 group relative hover:border-slate-600 shadow-2xl transition-all duration-300 animate-slide-up" style={{animationDelay: `${idx * 100}ms`}}>
                           <button onClick={() => handleDeleteGoal(goal.id)} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-rose-500 bg-slate-950/50 rounded-full border border-slate-800 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14} /></button>
                           
                           <div className="flex justify-between items-start mb-6">

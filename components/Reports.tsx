@@ -5,8 +5,11 @@ import { db, subscribe } from '../services/storage';
 import { Transaction, Account, Category } from '../types';
 import { TrendingUp, TrendingDown, Wallet, Calendar, ArrowDownCircle, ArrowUpCircle, PiggyBank, Activity, PieChart as PieIcon, BarChart3, Filter, Flame } from 'lucide-react';
 
-const ReportCard = ({ title, value, subtext, icon: Icon, colorClass }: any) => (
-  <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 relative overflow-hidden flex flex-col justify-between h-full group hover:border-slate-700 transition-all">
+const ReportCard = ({ title, value, subtext, icon: Icon, colorClass, delay }: any) => (
+  <div 
+    className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 relative overflow-hidden flex flex-col justify-between h-full group hover:border-slate-700 transition-all animate-slide-up"
+    style={{animationDelay: `${delay}ms`, opacity: 0}}
+  >
     <div>
         <div className="flex justify-between items-start mb-2">
             <div className={`p-3 rounded-xl bg-slate-900/50 border border-slate-800 ${colorClass.replace('text-', 'text-opacity-80 ')}`}>
@@ -315,7 +318,8 @@ export const Reports: React.FC = () => {
             value={formatMoney(stats.income)} 
             subtext="Earnings" 
             icon={ArrowUpCircle} 
-            colorClass="text-emerald-500" 
+            colorClass="text-emerald-500"
+            delay={100} 
         />
         <ReportCard 
             title="Total Expenses" 
@@ -323,6 +327,7 @@ export const Reports: React.FC = () => {
             subtext="Excludes Investments" 
             icon={ArrowDownCircle} 
             colorClass="text-rose-500" 
+            delay={200}
         />
         <ReportCard 
             title="Invested" 
@@ -330,10 +335,11 @@ export const Reports: React.FC = () => {
             subtext={`${stats.income > 0 ? ((stats.investment/stats.income)*100).toFixed(0) : 0}% of Income`} 
             icon={TrendingUp} 
             colorClass="text-purple-500" 
+            delay={300}
         />
       </div>
 
-      <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+      <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 animate-slide-up" style={{animationDelay: '400ms'}}>
           <div className="flex justify-between items-center mb-6">
               <h3 className="text-white font-semibold flex items-center gap-2">
                   <Calendar size={18} className="text-blue-400" /> Daily Financial Pulse
@@ -396,7 +402,7 @@ export const Reports: React.FC = () => {
           </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slide-up" style={{animationDelay: '500ms'}}>
           <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
               <h3 className="text-white font-semibold mb-6">Capital Allocation</h3>
               <div className="flex flex-col md:flex-row items-center">
@@ -476,7 +482,7 @@ export const Reports: React.FC = () => {
           </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slide-up" style={{animationDelay: '600ms'}}>
           
           <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                <h3 className="text-white font-semibold mb-6 flex items-center gap-2">

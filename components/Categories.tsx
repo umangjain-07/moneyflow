@@ -197,7 +197,7 @@ export const Categories: React.FC = () => {
   }, {} as Record<string, Category[]>), [categories]);
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6 pb-20 animate-in fade-in duration-500">
       <div className="flex justify-between items-center">
         <div>
             <h1 className="text-2xl font-bold text-white">Spending Categories</h1>
@@ -210,8 +210,12 @@ export const Categories: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {(Object.entries(groupedCategories) as [string, Category[]][]).sort().map(([groupName, groupCats]) => (
-              <div key={groupName} className="bg-[#0f172a] border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-slate-700 transition-colors">
+          {(Object.entries(groupedCategories) as [string, Category[]][]).sort().map(([groupName, groupCats], idx) => (
+              <div 
+                key={groupName} 
+                className="bg-[#0f172a] border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-slate-700 transition-colors animate-slide-up"
+                style={{animationDelay: `${idx * 100}ms`, opacity: 0}}
+              >
                   <div 
                     onClick={() => { setAnalysisTarget({ type: 'GROUP', id: groupName, name: groupName }); setActiveTab('ANALYTICS'); }}
                     className="p-4 bg-slate-900/50 border-b border-slate-800 flex justify-between items-center cursor-pointer hover:bg-slate-900 transition-colors"

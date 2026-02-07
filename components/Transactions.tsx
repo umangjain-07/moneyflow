@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, TransactionType } from '../types';
@@ -190,8 +191,8 @@ export const Transactions: React.FC = () => {
           return (
             <div 
                 onClick={() => handleOpenEdit(tx)} 
-                className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 flex justify-between items-center mb-2 active:bg-slate-800 transition-all cursor-pointer animate-in slide-in-from-bottom-2 fade-in fill-mode-backwards"
-                style={{animationDelay: `${index * 50}ms`}}
+                className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 flex justify-between items-center mb-2 active:bg-slate-800 transition-all cursor-pointer animate-slide-up"
+                style={{animationDelay: `${Math.min(index * 30, 500)}ms`, opacity: 0}}
             >
                 <div className="flex items-center gap-3">
                     <div className={`p-2 rounded-lg flex items-center justify-center text-base ${getColorClass()}`}>
@@ -218,8 +219,8 @@ export const Transactions: React.FC = () => {
       return (
         <tr 
             onClick={() => handleOpenEdit(tx)} 
-            className="hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-800/50 last:border-0 animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards"
-            style={{animationDelay: `${index * 30}ms`}}
+            className="hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-800/50 last:border-0 animate-slide-up"
+            style={{animationDelay: `${Math.min(index * 20, 500)}ms`, opacity: 0}}
         >
             <td className="px-6 py-4 text-slate-400 whitespace-nowrap font-mono text-xs">{tx.date}</td>
             <td className="px-6 py-4 font-medium text-slate-200">
@@ -257,7 +258,7 @@ export const Transactions: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-2xl font-bold text-slate-100">Transactions</h1>
         

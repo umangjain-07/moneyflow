@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Account } from '../types';
@@ -57,7 +58,7 @@ export const Accounts: React.FC = () => {
   }, [accounts, settings.currency]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
             <h1 className="text-2xl font-bold text-slate-100">Accounts</h1>
@@ -84,8 +85,8 @@ export const Accounts: React.FC = () => {
             return (
               <div 
                 key={acc.id} 
-                className="relative overflow-hidden bg-slate-900/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 group hover:border-slate-600 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
-                style={{animationDelay: `${idx * 100}ms`}}
+                className="relative overflow-hidden bg-slate-900/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 group hover:border-slate-600 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl animate-slide-up"
+                style={{animationDelay: `${idx * 100}ms`, opacity: 0}}
               >
                  <div className={`absolute top-0 right-0 w-48 h-48 bg-gradient-to-br ${getGradient(acc.type)} opacity-10 rounded-bl-full -mr-10 -mt-10 transition-opacity duration-500 group-hover:opacity-20`} />
                  
