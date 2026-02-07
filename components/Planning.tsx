@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -20,11 +20,17 @@ export const Planning: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   
+  // Salaried Specifics
+  const [isSalaried, setIsSalaried] = useState(false);
+  const [salaryCat, setSalaryCat] = useState('');
+  const [pfCat, setPfCat] = useState('');
+
   // The Configuration Table
   const [catConfigs, setCatConfigs] = useState<CategoryBudgetConfig[]>([]);
   
   // Historical Data for Guidance
   const [historyStats, setHistoryStats] = useState<Record<string, number>>({});
+  const [incomeStats, setIncomeStats] = useState<Record<string, number>>({});
 
   const DAYS_IN_MONTH = 30; 
   const MONTHS_IN_YEAR = 12;
@@ -50,7 +56,7 @@ export const Planning: React.FC = () => {
 
     txs.forEach(t => {
         const d = new Date(t.date);
-        if (d >= oneYearAgo && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
+        if (d >= oneYearAgo) {
              const monthKey = t.date.substring(0, 7); // YYYY-MM
              
              const acc = freshAccounts.find(a => a.id === t.accountId);
@@ -63,18 +69,24 @@ export const Planning: React.FC = () => {
 
     // 2. Calculate average based ONLY on active months
     const stats: Record<string, number> = {};
+    const incStats: Record<string, number> = {};
+
     Object.keys(catMonthMap).forEach(catId => {
         const months = Object.values(catMonthMap[catId]);
         const total = months.reduce((sum, val) => sum + val, 0);
-        const activeMonthCount = months.length; // Only months that exist in the map had transactions
+        const activeMonthCount = months.length;
         
-        if (activeMonthCount > 0) {
-            stats[catId] = Math.round(total / activeMonthCount);
+        const cat = cats.find(c => c.id === catId);
+        const avg = activeMonthCount > 0 ? Math.round(total / activeMonthCount) : 0;
+        
+        if (cat?.type === 'INCOME') {
+            incStats[catId] = avg;
         } else {
-            stats[catId] = 0;
+            stats[catId] = avg;
         }
     });
     setHistoryStats(stats);
+    setIncomeStats(incStats);
 
     const existingPlan = db.getPlan();
     
@@ -88,6 +100,9 @@ export const Planning: React.FC = () => {
         setSavingsGoal(existingPlan.savingsGoal.toString());
         setStartDate(existingPlan.startDate);
         setEndDate(existingPlan.endDate);
+        setIsSalaried(!!existingPlan.isSalaried);
+        setSalaryCat(existingPlan.salaryCategoryId || '');
+        setPfCat(existingPlan.pfCategoryId || '');
         
         // Merge existing config with potential new categories
         const mergedConfigs = validCats.map(c => {
@@ -144,6 +159,21 @@ export const Planning: React.FC = () => {
 
   // --- ACTIONS ---
 
+  const computeComputedIncome = () => {
+      if (!isSalaried) return;
+      if (!salaryCat) { alert("Please select a Salary Category first."); return; }
+      
+      const salaryAvg = incomeStats[salaryCat] || 0;
+      
+      // If user selected PF, it implies their 'Salary' transaction might be Gross or Net.
+      // Usually, transactions are Net. If they track PF as an 'Investment' or 'Expense' transaction,
+      // it means they receive it and move it, OR they track it manually.
+      // We will just sum up the averages.
+      
+      // NOTE: Logic here assumes the user wants to budget based on what hits the account (Net Salary).
+      setSalary(salaryAvg.toString());
+  };
+
   const handleConfigChange = (catId: string, field: keyof CategoryBudgetConfig, value: any) => {
       setCatConfigs(prev => prev.map(c => {
           if (c.categoryId !== catId) return c;
@@ -184,10 +214,13 @@ export const Planning: React.FC = () => {
       const salaryNum = parseFloat(salary) || 0;
       const savingsNum = parseFloat(savingsGoal) || 0;
       
-      if (salaryNum <= 0) return alert("Salary is required");
+      if (salaryNum <= 0) return alert("Salary/Income is required");
 
       const newPlan: FinancialPlan = {
           salary: salaryNum,
+          isSalaried,
+          salaryCategoryId: salaryCat,
+          pfCategoryId: pfCat,
           savingsGoal: savingsNum,
           startDate,
           endDate,
@@ -382,8 +415,66 @@ export const Planning: React.FC = () => {
                   <div className="lg:col-span-1 space-y-6">
                       <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4">
                           <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
+                          
+                          {/* Salaried Toggle */}
+                          <div 
+                            onClick={() => setIsSalaried(!isSalaried)}
+                            className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30' : 'bg-slate-900/50 border-slate-800'}`}
+                          >
+                             <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${isSalaried ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-600'}`}>
+                                 {isSalaried && <CheckCircle2 size={12} />}
+                             </div>
+                             <div>
+                                 <p className="text-xs font-bold text-white">Salaried Employee</p>
+                                 <p className="text-[10px] text-slate-500">Enable advanced mapping</p>
+                             </div>
+                          </div>
+
+                          {isSalaried && (
+                            <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-800/50 animate-in slide-in-from-top-2 fade-in">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Salary Category</label>
+                                    <div className="relative">
+                                        <select 
+                                            value={salaryCat} 
+                                            onChange={(e) => setSalaryCat(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none"
+                                        >
+                                            <option value="">-- Select --</option>
+                                            {categories.filter(c => c.type === 'INCOME').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                                        </select>
+                                        <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Provident Fund (PF)</label>
+                                    <div className="relative">
+                                        <select 
+                                            value={pfCat} 
+                                            onChange={(e) => setPfCat(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none"
+                                        >
+                                            <option value="">-- Optional --</option>
+                                            {categories.filter(c => c.type === 'INVESTMENT').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                                        </select>
+                                        <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
+                                    </div>
+                                </div>
+                            </div>
+                          )}
+
                           <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Monthly Income</label>
+                              <div className="flex justify-between items-center mb-1.5">
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Monthly Income</label>
+                                {isSalaried && salaryCat && (
+                                    <button 
+                                        onClick={computeComputedIncome} 
+                                        className="text-[9px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 bg-blue-500/10 px-1.5 py-0.5 rounded"
+                                    >
+                                        <Zap size={8} /> Auto-Calc
+                                    </button>
+                                )}
+                              </div>
                               <div className="relative">
                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold">{settings.currencySymbol}</span>
                                    <input type="number" value={salary} onChange={e => setSalary(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-white font-mono outline-none focus:border-emerald-500/50" />

@@ -1,20 +1,27 @@
 
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe, getAutoEmoji, getColorForName } from '../services/storage';
 import { Category, Transaction, TransactionType } from '../types';
-import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, RotateCcw, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon } from 'lucide-react';
+import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, RotateCcw, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon, ArrowDownToLine } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, CartesianGrid, Legend } from 'recharts';
 
 const COMMON_EMOJIS = [
-    '💰', '💵', '💳', '🏦', '💸', '🧾', '🏷️', 
-    '🏠', '💡', '💧', '🔥', '⚡', '🌐', '🛠️', 
-    '🛒', '🍔', '🍽️', '☕', '🍺', '🍿', 
-    '🚗', '⛽', '🚌', '✈️', '🚖', '🔧', 
-    '⚕️', '💊', '💪', '🏥', '🧘', 
-    '🛍️', '🎁', '📅', '🎬', '🎮', '🎵', '📚', 
-    '🎓', '🏫', '👶', '🐾', 
-    '📈', '📉', '📊', '₿', '🥇', '🛡️'
+    // Finance & Work
+    '💰', '💵', '💳', '🏦', '💸', '🧾', '🏷️', '📈', '📉', '📊', '₿', '🥇', '🛡️', '💼', '📎', '📌', '📅',
+    // Home & Utilities
+    '🏠', '💡', '💧', '🔥', '⚡', '🌐', '🛠️', '🛋️', '🛏️', '🚪', '🔑', '🧼', '🧺', '🪴', '🚽', '📦',
+    // Food & Drink
+    '🛒', '🍔', '🍽️', '☕', '🍺', '🍿', '🍕', '🥗', '🥩', '🍗', '🍞', '🧀', '🍎', '🍌', '🍇', '🍉', '🍣', '🍱', '🍜', '🍝', '🍩', '🍪', '🍫', '🍷', '🍸', '🍹',
+    // Transport & Travel
+    '🚗', '⛽', '🚌', '✈️', '🚖', '🔧', '🚂', '🚇', '🚲', '🛴', '🛵', '⛵', '🗺️', '🧭', '🏖️', '⛰️', '🏨', '🎫',
+    // Health & Self
+    '⚕️', '💊', '💪', '🏥', '🧘', '💇', '💅', '🧖', '🦷', '👓', '🚑', '🩸', '🦠', '🧼',
+    // Shopping & Fun
+    '🛍️', '🎁', '🎬', '🎮', '🎵', '📚', '🎨', '🎲', '🎳', '🎯', '🎪', '🎟️', '🧶', '📷', '📱', '💻', '⌚', '🎧',
+    // Family & Pets
+    '👶', '🐾', '🐶', '🐱', '🎓', '🏫', '🧸', '🪁', '👨‍👩‍👧', '💍', '💐',
+    // Nature & Misc
+    '☀️', '🌧️', '❄️', '🌈', '🔥', '💧', '⭐', '❤️', '⚠️', '🚫', '✅', '🆘'
 ];
 
 interface AnalysisTarget {
@@ -31,13 +38,16 @@ export const Categories: React.FC = () => {
   const [analysisTarget, setAnalysisTarget] = useState<AnalysisTarget | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'TRANSACTIONS'>('ANALYTICS');
-  const [draggedTx, setDraggedTx] = useState<Transaction | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
   const [formData, setFormData] = useState<Partial<Category>>({
     name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️'
   });
-  const [mergeTarget, setMergeTarget] = useState('');
+
+  // Merge State
+  const [dragSourceId, setDragSourceId] = useState<string | null>(null);
+  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
 
   const loadData = () => {
       setCategories(db.getCategories());
@@ -54,23 +64,55 @@ export const Categories: React.FC = () => {
   const handleOpenEdit = (category?: Category) => {
     if (category) setFormData({ ...category });
     else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️' });
-    setMergeTarget('');
     setIsEditModalOpen(true);
     setShowEmojiPicker(false);
   };
 
   const handleSave = () => {
-    if (analysisTarget?.type === 'CATEGORY' && mergeTarget) {
-        db.mergeCategory(analysisTarget.id, mergeTarget);
-        setIsEditModalOpen(false);
-        setAnalysisTarget(null);
-        return;
-    }
     if (!formData.name || !formData.group) return;
     const catToSave = { ...formData, id: analysisTarget?.type === 'CATEGORY' ? analysisTarget.id : formData.id };
     if (!catToSave.icon) catToSave.icon = getAutoEmoji(catToSave.name || '');
     db.saveCategory(catToSave as Category);
     setIsEditModalOpen(false);
+  };
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+      e.dataTransfer.setData('text/plain', id);
+      setDragSourceId(id);
+      e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: string) => {
+      e.preventDefault();
+      if (dragSourceId !== id) {
+          setDragTargetId(id);
+      }
+  };
+
+  const handleDragLeave = () => {
+      setDragTargetId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+      e.preventDefault();
+      const sourceId = e.dataTransfer.getData('text/plain');
+      if (sourceId && sourceId !== targetId) {
+          setDragSourceId(sourceId);
+          setDragTargetId(targetId);
+          setIsMergeModalOpen(true);
+      } else {
+          setDragSourceId(null);
+          setDragTargetId(null);
+      }
+  };
+
+  const confirmMerge = () => {
+      if (dragSourceId && dragTargetId) {
+          db.mergeCategory(dragSourceId, dragTargetId);
+          setDragSourceId(null);
+          setDragTargetId(null);
+          setIsMergeModalOpen(false);
+      }
   };
 
   const currentAnalysisData = useMemo(() => {
@@ -94,7 +136,6 @@ export const Categories: React.FC = () => {
     const totalAmount = dataTxs.reduce((s, t) => s + t.amount, 0);
     
     // BUILD STACKED TREND DATA
-    // We need to group by Month, then by Sub-Element (Category name or Tag)
     const trendMap: Record<string, any> = {};
     const subElementKeys = new Set<string>();
 
@@ -112,7 +153,6 @@ export const Categories: React.FC = () => {
         if (analysisTarget.type === 'GROUP') {
             subKey = categories.find(c => c.id === t.categoryId)?.name || 'Unknown';
         } else {
-            // For single category, try to stack by tag, otherwise just one bar
             subKey = t.tags && t.tags.length > 0 ? t.tags[0] : 'Standard';
         }
         
@@ -124,7 +164,6 @@ export const Categories: React.FC = () => {
     const trendData = Object.values(trendMap).sort((a: any, b: any) => a.rawDate.localeCompare(b.rawDate)).slice(-12);
     const stackKeys = Array.from(subElementKeys);
 
-    // Breakdown for Pie Chart
     let breakdownData: any[] = [];
     if (analysisTarget.type === 'GROUP') {
         const catMap: Record<string, number> = {};
@@ -162,7 +201,7 @@ export const Categories: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
             <h1 className="text-2xl font-bold text-white">Spending Categories</h1>
-            <p className="text-slate-400 text-sm">Fine-tune your financial classification</p>
+            <p className="text-slate-400 text-sm">Drag categories to merge duplicates</p>
         </div>
         <div className="flex gap-2">
             <button onClick={() => db.resetCategories()} className="p-2.5 bg-slate-900 border border-slate-800 text-slate-500 hover:text-white rounded-xl active:scale-90 transition-all"><RotateCcw size={18}/></button>
@@ -184,23 +223,52 @@ export const Categories: React.FC = () => {
                       {groupCats.map(cat => (
                           <div 
                             key={cat.id} 
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, cat.id)}
+                            onDragOver={(e) => handleDragOver(e, cat.id)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, cat.id)}
                             onClick={() => { setAnalysisTarget({ type: 'CATEGORY', id: cat.id }); setActiveTab('ANALYTICS'); }}
-                            className="flex items-center justify-between p-3 hover:bg-slate-900/80 rounded-xl cursor-pointer group transition-all"
+                            className={`flex items-center justify-between p-3 rounded-xl cursor-pointer group transition-all duration-200 border border-transparent ${
+                                dragTargetId === cat.id 
+                                ? 'bg-indigo-500/20 border-indigo-500 scale-[1.02] shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
+                                : 'hover:bg-slate-900/80 hover:border-slate-800'
+                            } ${dragSourceId === cat.id ? 'opacity-50 grayscale' : ''}`}
                           >
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 pointer-events-none">
                                   <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg bg-slate-950 border border-slate-800" style={{color: cat.color}}>{cat.icon}</div>
                                   <div>
                                       <p className="text-sm font-semibold text-slate-300 group-hover:text-white">{cat.name}</p>
                                       {cat.necessity && <span className={`text-[10px] font-bold uppercase tracking-tighter ${cat.necessity === 'NEED' ? 'text-emerald-500' : 'text-amber-500'}`}>{cat.necessity}</span>}
                                   </div>
                               </div>
-                              <ArrowRight size={14} className="text-slate-700 group-hover:text-emerald-400 group-hover:translate-x-1 transition-all" />
+                              <GripHorizontal size={14} className="text-slate-800 group-hover:text-slate-600 cursor-grab active:cursor-grabbing" />
                           </div>
                       ))}
                   </div>
               </div>
           ))}
       </div>
+
+      {/* MERGE CONFIRMATION MODAL */}
+      {isMergeModalOpen && dragSourceId && dragTargetId && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsMergeModalOpen(false)} />
+             <div className="relative bg-[#0f172a] border border-slate-800 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95">
+                <div className="flex items-center justify-center mb-4 text-indigo-400">
+                    <ArrowDownToLine size={40} />
+                </div>
+                <h3 className="text-lg font-bold text-center text-white mb-2">Merge Categories?</h3>
+                <p className="text-center text-slate-400 text-sm mb-6">
+                    This will move all transactions from <strong className="text-white">{categories.find(c=>c.id===dragSourceId)?.name}</strong> into <strong className="text-white">{categories.find(c=>c.id===dragTargetId)?.name}</strong> and delete the source category.
+                </p>
+                <div className="flex gap-3">
+                    <button onClick={() => setIsMergeModalOpen(false)} className="flex-1 py-3 text-slate-500 font-bold hover:text-white">Cancel</button>
+                    <button onClick={confirmMerge} className="flex-1 py-3 bg-indigo-600 rounded-xl text-white font-bold hover:bg-indigo-500 shadow-lg">Confirm Merge</button>
+                </div>
+             </div>
+        </div>
+      )}
 
       {analysisTarget && !isEditModalOpen && currentAnalysisData && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -299,7 +367,7 @@ export const Categories: React.FC = () => {
                   <div className="space-y-6">
                       {/* Name & Icon Row */}
                       <div className="flex gap-4 items-end">
-                            <button onClick={()=>setShowEmojiPicker(!showEmojiPicker)} className="w-16 h-16 bg-slate-950 border border-slate-800 rounded-2xl text-3xl flex items-center justify-center hover:border-emerald-500/50 transition-colors relative">{formData.icon}{showEmojiPicker && (<div className="absolute top-20 left-0 w-[240px] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50 p-3 grid grid-cols-5 gap-3 max-h-[250px] overflow-y-auto">{COMMON_EMOJIS.map(e=>(<button key={e} onClick={(ev)=>{ev.stopPropagation(); setFormData({...formData, icon:e}); setShowEmojiPicker(false);}} className="text-xl hover:scale-125 transition-transform">{e}</button>))}</div>)}</button>
+                            <button onClick={()=>setShowEmojiPicker(!showEmojiPicker)} className="w-16 h-16 bg-slate-950 border border-slate-800 rounded-2xl text-3xl flex items-center justify-center hover:border-emerald-500/50 transition-colors relative">{formData.icon}{showEmojiPicker && (<div className="absolute top-20 left-0 w-[280px] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50 p-3 grid grid-cols-6 gap-2 max-h-[300px] overflow-y-auto">{COMMON_EMOJIS.map(e=>(<button key={e} onClick={(ev)=>{ev.stopPropagation(); setFormData({...formData, icon:e}); setShowEmojiPicker(false);}} className="text-xl hover:scale-125 transition-transform p-1 rounded hover:bg-slate-800">{e}</button>))}</div>)}</button>
                             <div className="flex-1"><label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Display Name</label><input type="text" className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:ring-2 ring-emerald-500/20" value={formData.name} onChange={e=>setFormData({...formData, name:e.target.value})} /></div>
                       </div>
 

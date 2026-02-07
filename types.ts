@@ -87,6 +87,9 @@ export interface CategoryBudgetConfig {
 
 export interface FinancialPlan {
   salary: number;
+  isSalaried?: boolean; // New
+  salaryCategoryId?: string; // New
+  pfCategoryId?: string; // New
   savingsGoal: number;
   startDate: string;
   endDate: string;
