@@ -45,12 +45,15 @@ export const Planning: React.FC = () => {
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(now.getFullYear() - 1);
     
+    // Use fresh accounts fetch for reliable currency conversion
+    const freshAccounts = db.getAccounts();
+
     txs.forEach(t => {
         const d = new Date(t.date);
         if (d >= oneYearAgo && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
              const monthKey = t.date.substring(0, 7); // YYYY-MM
-             const acc = db.getAccounts().find(a => a.id === t.accountId);
-             // FIX: Convert to the USER'S selected currency, not hardcoded 'USD'
+             
+             const acc = freshAccounts.find(a => a.id === t.accountId);
              const val = db.convertAmount(t.amount, acc?.currency || currentSettings.currency, currentSettings.currency);
              
              if (!catMonthMap[t.categoryId]) catMonthMap[t.categoryId] = {};
@@ -88,7 +91,7 @@ export const Planning: React.FC = () => {
         
         // Merge existing config with potential new categories
         const mergedConfigs = validCats.map(c => {
-            const existing = existingPlan.categoryConfigs.find(conf => conf.categoryId === c.id);
+            const existing = existingPlan.categoryConfigs ? existingPlan.categoryConfigs.find(conf => conf.categoryId === c.id) : null;
             if (existing) {
                 // Migration check: if old data lacks 'period', default to MONTHLY
                 if (!existing.period) {
@@ -117,12 +120,18 @@ export const Planning: React.FC = () => {
         setEndDate(end);
         
         // Initial Config Generation
-        const initialConfigs = validCats.map(c => ({
-            categoryId: c.id,
-            type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
-            allocatedAmount: stats[c.id] || 0,
-            period: 'MONTHLY'
-        }));
+        const initialConfigs = validCats.map(c => {
+            // When creating a new plan, we don't have an existing config to look up
+            // Just rely on stats
+            const initialAmount = stats[c.id] || 0;
+
+            return {
+                categoryId: c.id,
+                type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
+                allocatedAmount: initialAmount,
+                period: 'MONTHLY'
+            };
+        });
         setCatConfigs(initialConfigs as CategoryBudgetConfig[]);
     }
   };
@@ -222,9 +231,13 @@ export const Planning: React.FC = () => {
       let totalVariableSpent = 0;
       let totalFixedSpent = 0;
 
+      // We use direct DB fetch here to ensure we have the absolute latest account details 
+      // (specifically currency) to avoid race conditions with React state updates.
+      const currentAccounts = db.getAccounts();
+
       transactions.forEach(t => {
           if (t.date >= plan.startDate && t.date <= plan.endDate && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
-              const acc = accounts.find(a => a.id === t.accountId);
+              const acc = currentAccounts.find(a => a.id === t.accountId);
               const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
               spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
               

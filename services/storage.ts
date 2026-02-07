@@ -229,10 +229,12 @@ class StorageService {
   }
   
   convertAmount(a: number, f: string, t: string) { 
-      // If currency is not found in rates, fallback to 1 (treat as USD) but log warning in dev
-      const rateF = RATES[f] || 1;
-      const rateT = RATES[t] || 1;
-      return f === t ? a : (a / rateF) * rateT; 
+      // Safe conversion with normalization
+      const F = (f || 'USD').toUpperCase();
+      const T = (t || 'USD').toUpperCase();
+      const rateF = RATES[F] || 1;
+      const rateT = RATES[T] || 1;
+      return F === T ? a : (a / rateF) * rateT; 
   }
   
   private calculateAccountBalanceAt(account: Account, transactions: Transaction[], endDate: string): number {
