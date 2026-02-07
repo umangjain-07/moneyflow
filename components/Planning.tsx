@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -45,20 +45,17 @@ export const Planning: React.FC = () => {
     setAccounts(db.getAccounts());
     
     // --- SMART AVERAGING LOGIC ---
-    // 1. Group transactions by (Category -> Month)
     const catMonthMap: Record<string, Record<string, number>> = {};
     const now = new Date();
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(now.getFullYear() - 1);
     
-    // Use fresh accounts fetch for reliable currency conversion
     const freshAccounts = db.getAccounts();
 
     txs.forEach(t => {
         const d = new Date(t.date);
         if (d >= oneYearAgo) {
              const monthKey = t.date.substring(0, 7); // YYYY-MM
-             
              const acc = freshAccounts.find(a => a.id === t.accountId);
              const val = db.convertAmount(t.amount, acc?.currency || currentSettings.currency, currentSettings.currency);
              
@@ -67,7 +64,6 @@ export const Planning: React.FC = () => {
         }
     });
 
-    // 2. Calculate average based ONLY on active months
     const stats: Record<string, number> = {};
     const incStats: Record<string, number> = {};
 
@@ -75,49 +71,52 @@ export const Planning: React.FC = () => {
         const months = Object.values(catMonthMap[catId]);
         const total = months.reduce((sum, val) => sum + val, 0);
         const activeMonthCount = months.length;
-        
-        const cat = cats.find(c => c.id === catId);
         const avg = activeMonthCount > 0 ? Math.round(total / activeMonthCount) : 0;
+        const cat = cats.find(c => c.id === catId);
         
-        if (cat?.type === 'INCOME') {
-            incStats[catId] = avg;
-        } else {
-            stats[catId] = avg;
-        }
+        if (cat?.type === 'INCOME') incStats[catId] = avg;
+        else stats[catId] = avg;
     });
     setHistoryStats(stats);
     setIncomeStats(incStats);
 
     const existingPlan = db.getPlan();
     
-    // Filter out INCOME categories from the budget list (Income is the Input Source)
+    // Filter out INCOME categories from the budget list
     const validCats = cats.filter(c => c.type !== 'INCOME');
 
     if (existingPlan) {
-        setPlan(existingPlan);
-        // Pre-fill form
-        setSalary(existingPlan.salary.toString());
-        setSavingsGoal(existingPlan.savingsGoal.toString());
-        setStartDate(existingPlan.startDate);
-        setEndDate(existingPlan.endDate);
-        setIsSalaried(!!existingPlan.isSalaried);
-        setSalaryCat(existingPlan.salaryCategoryId || '');
-        setPfCat(existingPlan.pfCategoryId || '');
+        // --- CURRENCY CONVERSION FIX ---
+        // If the plan was saved in a different currency, convert all values to the current display currency
+        let workingPlan = { ...existingPlan };
+        
+        if (workingPlan.currency && workingPlan.currency !== currentSettings.currency) {
+            console.log(`Converting Plan from ${workingPlan.currency} to ${currentSettings.currency}`);
+            workingPlan.salary = db.convertAmount(workingPlan.salary, workingPlan.currency, currentSettings.currency);
+            workingPlan.savingsGoal = db.convertAmount(workingPlan.savingsGoal, workingPlan.currency, currentSettings.currency);
+            workingPlan.categoryConfigs = workingPlan.categoryConfigs.map(c => ({
+                ...c,
+                allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
+            }));
+            workingPlan.currency = currentSettings.currency; // Update to new currency
+        }
+
+        setPlan(workingPlan);
+        setSalary(workingPlan.salary.toFixed(0));
+        setSavingsGoal(workingPlan.savingsGoal.toFixed(0));
+        setStartDate(workingPlan.startDate);
+        setEndDate(workingPlan.endDate);
+        setIsSalaried(!!workingPlan.isSalaried);
+        setSalaryCat(workingPlan.salaryCategoryId || '');
+        setPfCat(workingPlan.pfCategoryId || '');
         
         // Merge existing config with potential new categories
         const mergedConfigs = validCats.map(c => {
-            const existing = existingPlan.categoryConfigs ? existingPlan.categoryConfigs.find(conf => conf.categoryId === c.id) : null;
+            const existing = workingPlan.categoryConfigs ? workingPlan.categoryConfigs.find(conf => conf.categoryId === c.id) : null;
             if (existing) {
-                // Migration check: if old data lacks 'period', default to MONTHLY
-                if (!existing.period) {
-                     // @ts-ignore
-                     if (existing.isDaily) existing.period = 'DAILY';
-                     else existing.period = 'MONTHLY';
-                }
+                if (!existing.period) existing.period = 'MONTHLY'; // Migration
                 return existing;
             }
-            
-            // Default heuristics for new categories
             return {
                 categoryId: c.id,
                 type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
@@ -128,25 +127,17 @@ export const Planning: React.FC = () => {
         setCatConfigs(mergedConfigs);
     } else {
         setIsEditing(true);
-        // Defaults
         const start = now.toISOString().split('T')[0];
         const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
         setStartDate(start);
         setEndDate(end);
         
-        // Initial Config Generation
-        const initialConfigs = validCats.map(c => {
-            // When creating a new plan, we don't have an existing config to look up
-            // Just rely on stats
-            const initialAmount = stats[c.id] || 0;
-
-            return {
-                categoryId: c.id,
-                type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
-                allocatedAmount: initialAmount,
-                period: 'MONTHLY'
-            };
-        });
+        const initialConfigs = validCats.map(c => ({
+            categoryId: c.id,
+            type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
+            allocatedAmount: stats[c.id] || 0,
+            period: 'MONTHLY'
+        }));
         setCatConfigs(initialConfigs as CategoryBudgetConfig[]);
     }
   };
@@ -162,28 +153,17 @@ export const Planning: React.FC = () => {
   const computeComputedIncome = () => {
       if (!isSalaried) return;
       if (!salaryCat) { alert("Please select a Salary Category first."); return; }
-      
       const salaryAvg = incomeStats[salaryCat] || 0;
-      
-      // If user selected PF, it implies their 'Salary' transaction might be Gross or Net.
-      // Usually, transactions are Net. If they track PF as an 'Investment' or 'Expense' transaction,
-      // it means they receive it and move it, OR they track it manually.
-      // We will just sum up the averages.
-      
-      // NOTE: Logic here assumes the user wants to budget based on what hits the account (Net Salary).
       setSalary(salaryAvg.toString());
   };
 
   const handleConfigChange = (catId: string, field: keyof CategoryBudgetConfig, value: any) => {
       setCatConfigs(prev => prev.map(c => {
           if (c.categoryId !== catId) return c;
-          
           if (field === 'type' && value === 'VARIABLE') {
-              // Reset to historical average if switching to variable, respecting "what it actually is"
               const hist = historyStats[c.categoryId] || 0;
               return { ...c, [field]: value, allocatedAmount: c.allocatedAmount || hist };
           }
-
           return { ...c, [field]: value };
       }));
   };
@@ -192,12 +172,9 @@ export const Planning: React.FC = () => {
       const val = parseFloat(inputValue) || 0;
       setCatConfigs(prev => prev.map(c => {
           if (c.categoryId !== catId) return c;
-          
-          // Store everything as Monthly equivalent for consistent math
           let monthlyEquivalent = val;
           if (c.period === 'DAILY') monthlyEquivalent = val * DAYS_IN_MONTH;
           else if (c.period === 'YEARLY') monthlyEquivalent = val / MONTHS_IN_YEAR;
-          
           return { ...c, allocatedAmount: monthlyEquivalent };
       }));
   };
@@ -206,17 +183,16 @@ export const Planning: React.FC = () => {
       setCatConfigs(prev => prev.map(c => {
           if (c.categoryId !== catId) return c;
           return { ...c, period: newPeriod };
-          // Note: allocatedAmount stays the same (Monthly), the input value displayed will change
       }));
   };
 
   const handleSavePlan = () => {
       const salaryNum = parseFloat(salary) || 0;
       const savingsNum = parseFloat(savingsGoal) || 0;
-      
       if (salaryNum <= 0) return alert("Salary/Income is required");
 
       const newPlan: FinancialPlan = {
+          currency: settings.currency, // Store current currency context
           salary: salaryNum,
           isSalaried,
           salaryCategoryId: salaryCat,
@@ -235,42 +211,29 @@ export const Planning: React.FC = () => {
   const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const formatMoneyPrecise = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // --- PREVIEW STATS FOR SETUP SCREEN ---
+  // --- STATS ---
   const previewStats = useMemo(() => {
       const inc = parseFloat(salary) || 0;
       const sav = parseFloat(savingsGoal) || 0;
-      
       const totalFixed = catConfigs.filter(c => c.type === 'FIXED').reduce((sum, c) => sum + c.allocatedAmount, 0);
       const totalVariable = catConfigs.filter(c => c.type === 'VARIABLE').reduce((sum, c) => sum + c.allocatedAmount, 0);
-      
-      // Buffer is what is left AFTER user-defined budgets
-      const buffer = inc - sav - totalFixed - totalVariable;
-      
-      return { totalFixed, totalVariable, buffer };
+      return { totalFixed, totalVariable, buffer: inc - sav - totalFixed - totalVariable };
   }, [salary, savingsGoal, catConfigs]);
 
-
-  // --- DASHBOARD DATA DERIVATION ---
   const dashboardStats = useMemo(() => {
       if (!plan) return null;
-      
       const now = new Date();
       const end = new Date(plan.endDate);
-      const start = new Date(plan.startDate);
-      
       const daysLeft = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      
       const spentMap: Record<string, number> = {};
       let totalVariableSpent = 0;
       let totalFixedSpent = 0;
-
-      // We use direct DB fetch here to ensure we have the absolute latest account details 
-      // (specifically currency) to avoid race conditions with React state updates.
       const currentAccounts = db.getAccounts();
 
       transactions.forEach(t => {
           if (t.date >= plan.startDate && t.date <= plan.endDate && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
               const acc = currentAccounts.find(a => a.id === t.accountId);
+              // Ensure we convert using current settings to match displayed plan
               const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
               spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
               
@@ -284,15 +247,12 @@ export const Planning: React.FC = () => {
       const totalVariableRemaining = totalVariableAllocated - totalVariableSpent;
       const overallDailyLimit = Math.max(0, totalVariableRemaining / daysLeft);
 
-      const categoriesDetails = plan.categoryConfigs
-        .filter(c => c.type !== 'IGNORE')
-        .map(conf => {
+      const categoriesDetails = plan.categoryConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
           const cat = categories.find(c => c.id === conf.categoryId);
           const allocated = conf.allocatedAmount;
           const spent = spentMap[conf.categoryId] || 0;
           const remaining = allocated - spent;
           const dailyLimit = conf.type === 'VARIABLE' ? Math.max(0, remaining / daysLeft) : 0;
-          
           return {
               id: conf.categoryId,
               name: cat?.name || 'Unknown',
@@ -321,57 +281,52 @@ export const Planning: React.FC = () => {
           savingsGoal: plan.savingsGoal,
           totalVariableAllocated
       };
-
   }, [plan, transactions, accounts, categories, settings]);
 
-
-  // --- RENDER: SETUP MODE ---
+  // --- RENDER ---
 
   if (isEditing || !plan) {
       const buffer = previewStats.buffer;
       const isNegative = buffer < 0;
-
       const groupedConfigs = {
           FIXED: catConfigs.filter(c => categories.find(cat => cat.id === c.categoryId)?.type === 'EXPENSE'),
           INVEST: catConfigs.filter(c => categories.find(cat => cat.id === c.categoryId)?.type === 'INVESTMENT')
       };
 
-      const renderConfigRow = (conf: CategoryBudgetConfig) => {
+      const renderConfigRow = (conf: CategoryBudgetConfig, index: number) => {
           const cat = categories.find(c => c.id === conf.categoryId);
           const histAvg = historyStats[conf.categoryId] || 0;
-          
-          // Determine display value based on selected period
           let displayValue = conf.allocatedAmount;
           if (conf.period === 'DAILY') displayValue = conf.allocatedAmount / DAYS_IN_MONTH;
           else if (conf.period === 'YEARLY') displayValue = conf.allocatedAmount * MONTHS_IN_YEAR;
           
           return (
-              <div key={conf.categoryId} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors gap-3">
+              <div 
+                key={conf.categoryId} 
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded-xl hover:border-slate-700 transition-all duration-500 gap-3 animate-slide-up"
+                style={{animationDelay: `${index * 50}ms`, opacity: 0}}
+              >
                   <div className="flex items-center gap-3 w-full sm:w-1/3">
-                      <span className="text-lg">{cat?.icon}</span>
+                      <span className="text-lg shadow-sm">{cat?.icon}</span>
                       <div className="min-w-0">
                           <p className="font-bold text-slate-200 text-sm truncate">{cat?.name}</p>
                           <div className="flex items-center gap-1.5">
                               <p className="text-[10px] text-slate-500">Avg: {formatMoney(histAvg)}</p>
-                              {histAvg > 0 && (
-                                <span className="text-[9px] text-slate-600 bg-slate-900 px-1 rounded border border-slate-800" title="Average of months with spending">Active Mo. Only</span>
-                              )}
+                              {histAvg > 0 && <span className="text-[9px] text-slate-600 bg-slate-900 px-1 rounded border border-slate-800">Active</span>}
                           </div>
                       </div>
                   </div>
-                  
                   <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800 self-start sm:self-auto">
                       {(['FIXED', 'VARIABLE', 'IGNORE'] as const).map(t => (
                           <button 
                             key={t}
                             onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
-                            className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${conf.type === t ? (t==='FIXED'?'bg-rose-500 text-white':t==='VARIABLE'?'bg-blue-500 text-white':'bg-slate-700 text-slate-300') : 'text-slate-600 hover:text-slate-400'}`}
+                            className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all duration-300 ${conf.type === t ? (t==='FIXED'?'bg-rose-500 text-white shadow-lg shadow-rose-900/20':t==='VARIABLE'?'bg-blue-500 text-white shadow-lg shadow-blue-900/20':'bg-slate-700 text-slate-300') : 'text-slate-600 hover:text-slate-400'}`}
                           >
                               {t.slice(0,3)}
                           </button>
                       ))}
                   </div>
-
                   <div className="flex gap-2 items-center w-full sm:w-auto justify-end">
                       {conf.type !== 'IGNORE' ? (
                           <>
@@ -379,12 +334,12 @@ export const Planning: React.FC = () => {
                                 type="number" 
                                 value={displayValue ? parseFloat(displayValue.toFixed(2)) : ''}
                                 onChange={(e) => handleAmountInput(conf.categoryId, e.target.value)}
-                                className={`w-24 bg-slate-900 border rounded p-1.5 text-right text-xs text-white outline-none focus:border-emerald-500 ${conf.type === 'VARIABLE' ? 'border-blue-500/30' : 'border-slate-700'}`}
+                                className={`w-24 bg-slate-900 border rounded p-1.5 text-right text-xs text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all ${conf.type === 'VARIABLE' ? 'border-blue-500/30' : 'border-slate-700'}`}
                                 placeholder="0"
                             />
                             <div className="relative">
                                 <select 
-                                    className="appearance-none bg-slate-900 border border-slate-800 rounded-md py-1.5 pl-2 pr-6 text-[10px] font-bold text-slate-400 outline-none cursor-pointer w-20"
+                                    className="appearance-none bg-slate-900 border border-slate-800 rounded-md py-1.5 pl-2 pr-6 text-[10px] font-bold text-slate-400 outline-none cursor-pointer w-20 hover:border-slate-600 transition-colors"
                                     value={conf.period || 'MONTHLY'}
                                     onChange={(e) => handlePeriodToggle(conf.categoryId, e.target.value as any)}
                                 >
@@ -395,51 +350,36 @@ export const Planning: React.FC = () => {
                                 <ChevronDown size={10} className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
                             </div>
                           </>
-                      ) : (
-                          <span className="text-xs text-slate-600 w-24 text-center">-</span>
-                      )}
+                      ) : <span className="text-xs text-slate-600 w-24 text-center">-</span>}
                   </div>
               </div>
           );
       };
 
       return (
-          <div className="max-w-4xl mx-auto space-y-6 pb-20">
+          <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-500">
               <div className="flex items-center justify-between">
-                  <h1 className="text-2xl font-bold text-white">Create Deterministic Plan</h1>
-                  {plan && <button onClick={() => setIsEditing(false)} className="text-slate-500 hover:text-white transition-colors">Cancel</button>}
+                  <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Sparkles className="text-emerald-500" size={24}/> Planner Setup</h1>
+                  {plan && <button onClick={() => setIsEditing(false)} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl">Cancel</button>}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* LEFT: Inputs */}
                   <div className="lg:col-span-1 space-y-6">
-                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4">
+                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
                           <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
-                          
-                          {/* Salaried Toggle */}
                           <div 
                             onClick={() => setIsSalaried(!isSalaried)}
-                            className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30' : 'bg-slate-900/50 border-slate-800'}`}
+                            className={`p-3 rounded-xl border cursor-pointer transition-all duration-300 flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'}`}
                           >
-                             <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${isSalaried ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-600'}`}>
-                                 {isSalaried && <CheckCircle2 size={12} />}
-                             </div>
-                             <div>
-                                 <p className="text-xs font-bold text-white">Salaried Employee</p>
-                                 <p className="text-[10px] text-slate-500">Enable advanced mapping</p>
-                             </div>
+                             <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${isSalaried ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-600'}`}>{isSalaried && <CheckCircle2 size={12} />}</div>
+                             <div><p className="text-xs font-bold text-white">Salaried Employee</p><p className="text-[10px] text-slate-500">Enable advanced mapping</p></div>
                           </div>
-
                           {isSalaried && (
                             <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-800/50 animate-in slide-in-from-top-2 fade-in">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Salary Category</label>
                                     <div className="relative">
-                                        <select 
-                                            value={salaryCat} 
-                                            onChange={(e) => setSalaryCat(e.target.value)}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none"
-                                        >
+                                        <select value={salaryCat} onChange={(e) => setSalaryCat(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none transition-colors">
                                             <option value="">-- Select --</option>
                                             {categories.filter(c => c.type === 'INCOME').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                                         </select>
@@ -449,11 +389,7 @@ export const Planning: React.FC = () => {
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Provident Fund (PF)</label>
                                     <div className="relative">
-                                        <select 
-                                            value={pfCat} 
-                                            onChange={(e) => setPfCat(e.target.value)}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none"
-                                        >
+                                        <select value={pfCat} onChange={(e) => setPfCat(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none transition-colors">
                                             <option value="">-- Optional --</option>
                                             {categories.filter(c => c.type === 'INVESTMENT').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                                         </select>
@@ -462,38 +398,29 @@ export const Planning: React.FC = () => {
                                 </div>
                             </div>
                           )}
-
                           <div>
                               <div className="flex justify-between items-center mb-1.5">
                                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Monthly Income</label>
-                                {isSalaried && salaryCat && (
-                                    <button 
-                                        onClick={computeComputedIncome} 
-                                        className="text-[9px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 bg-blue-500/10 px-1.5 py-0.5 rounded"
-                                    >
-                                        <Zap size={8} /> Auto-Calc
-                                    </button>
-                                )}
+                                {isSalaried && salaryCat && <button onClick={computeComputedIncome} className="text-[9px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 bg-blue-500/10 px-1.5 py-0.5 rounded transition-colors"><Zap size={8} /> Auto-Calc</button>}
                               </div>
-                              <div className="relative">
-                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold">{settings.currencySymbol}</span>
-                                   <input type="number" value={salary} onChange={e => setSalary(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-white font-mono outline-none focus:border-emerald-500/50" />
+                              <div className="relative group">
+                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold group-focus-within:text-emerald-500 transition-colors">{settings.currencySymbol}</span>
+                                   <input type="number" value={salary} onChange={e => setSalary(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-white font-mono outline-none focus:border-emerald-500/50 transition-all" />
                               </div>
                           </div>
                           <div>
                               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Savings Goal</label>
-                              <div className="relative">
-                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold">{settings.currencySymbol}</span>
-                                   <input type="number" value={savingsGoal} onChange={e => setSavingsGoal(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500/50" />
+                              <div className="relative group">
+                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold group-focus-within:text-emerald-500 transition-colors">{settings.currencySymbol}</span>
+                                   <input type="number" value={savingsGoal} onChange={e => setSavingsGoal(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500/50 transition-all" />
                               </div>
                           </div>
                           <div className="grid grid-cols-2 gap-3">
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Start</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white" /></div>
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">End</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white" /></div>
+                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Start</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-emerald-500/50 outline-none transition-colors" /></div>
+                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">End</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-emerald-500/50 outline-none transition-colors" /></div>
                           </div>
                       </div>
-
-                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-xl">
+                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-xl transition-all hover:border-slate-700">
                           <h3 className="font-bold text-white flex items-center gap-2"><Calculator size={16} className="text-blue-400"/> Balance Check</h3>
                           <div className="space-y-2 text-sm">
                               <div className="flex justify-between text-slate-400"><span>Income</span> <span className="text-white">{formatMoney(parseFloat(salary)||0)}</span></div>
@@ -505,40 +432,25 @@ export const Planning: React.FC = () => {
                                   <span className={isNegative ? 'text-rose-500' : 'text-emerald-400'}>{formatMoney(buffer)}</span>
                               </div>
                           </div>
-                          {isNegative && <div className="text-xs text-rose-500 bg-rose-500/10 p-2 rounded border border-rose-500/20">Over Budget! Expenses exceed income.</div>}
-                          <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all">Generate Plan</button>
+                          {isNegative && <div className="text-xs text-rose-500 bg-rose-500/10 p-2 rounded border border-rose-500/20 animate-pulse">Over Budget! Expenses exceed income.</div>}
+                          <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">Generate Plan</button>
                       </div>
                   </div>
-
-                  {/* RIGHT: Category Configuration */}
-                  <div className="lg:col-span-2 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col h-[700px]">
+                  <div className="lg:col-span-2 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col h-[700px] shadow-2xl">
                       <div className="p-4 border-b border-slate-800 bg-slate-900/50 rounded-t-2xl flex justify-between items-center">
                           <h3 className="font-bold text-white text-sm">Allocations</h3>
                       </div>
                       <div className="overflow-y-auto flex-1 p-2 custom-scrollbar space-y-6">
-                          
-                          {/* 1. EXPENSES */}
                           <div>
-                              <h4 className="px-2 mb-2 text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-2">
-                                  <ShoppingBag size={12}/> Expenses (Fixed & Variable)
-                              </h4>
-                              <div className="space-y-1">
-                                  {groupedConfigs.FIXED.map(renderConfigRow)}
-                              </div>
+                              <h4 className="px-2 mb-2 text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-2"><ShoppingBag size={12}/> Expenses (Fixed & Variable)</h4>
+                              <div className="space-y-1">{groupedConfigs.FIXED.map((c, i) => renderConfigRow(c, i))}</div>
                           </div>
-
-                          {/* 2. INVESTMENTS (Optional specific allocations) */}
                           {groupedConfigs.INVEST.length > 0 && (
                               <div>
-                                <h4 className="px-2 mb-2 text-xs font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2">
-                                    <TrendingUp size={12}/> Specific Investments
-                                </h4>
-                                <div className="space-y-1">
-                                    {groupedConfigs.INVEST.map(renderConfigRow)}
-                                </div>
+                                <h4 className="px-2 mb-2 text-xs font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp size={12}/> Specific Investments</h4>
+                                <div className="space-y-1">{groupedConfigs.INVEST.map((c, i) => renderConfigRow(c, i + groupedConfigs.FIXED.length))}</div>
                               </div>
                           )}
-
                       </div>
                   </div>
               </div>
@@ -546,69 +458,53 @@ export const Planning: React.FC = () => {
       );
   }
 
-  // --- RENDER: VIEW MODE ---
-  
-  if (!dashboardStats) return null;
-
   return (
-      <div className="max-w-4xl mx-auto space-y-6 pb-20">
-          
-          {/* Top Card: The Daily Driver */}
-          <div className="bg-gradient-to-br from-indigo-900/20 to-[#0f172a] p-8 rounded-[2rem] border border-indigo-500/20 shadow-2xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8">
+      <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          {/* Top Card */}
+          <div className="bg-gradient-to-br from-indigo-900/20 to-[#0f172a] p-8 rounded-[2rem] border border-indigo-500/20 shadow-2xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 group">
+               <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-1000"></div>
                <div className="relative z-10 text-center md:text-left">
                    <p className="text-indigo-300 text-xs font-black uppercase tracking-widest mb-2">Safe Daily Spending</p>
-                   <h1 className="text-6xl font-black text-white tracking-tighter drop-shadow-xl">
-                       {formatMoneyPrecise(dashboardStats.overallDailyLimit)}
-                   </h1>
-                   <p className="text-slate-400 text-sm mt-2 font-medium">
-                       <span className="text-white font-bold">{dashboardStats.daysLeft} days</span> remaining
-                   </p>
+                   <h1 className="text-6xl font-black text-white tracking-tighter drop-shadow-xl">{formatMoneyPrecise(dashboardStats.overallDailyLimit)}</h1>
+                   <p className="text-slate-400 text-sm mt-2 font-medium"><span className="text-white font-bold">{dashboardStats.daysLeft} days</span> remaining</p>
                </div>
-               
-               <div className="bg-slate-900/50 p-6 rounded-2xl border border-white/5 backdrop-blur-sm w-full md:w-64 space-y-4">
+               <div className="bg-slate-900/50 p-6 rounded-2xl border border-white/5 backdrop-blur-sm w-full md:w-64 space-y-4 shadow-inner">
                     <div className="flex justify-between items-center text-xs">
                         <span className="text-slate-400 font-bold uppercase">Variable Pool</span>
                         <span className="text-white font-mono">{formatMoney(dashboardStats.totalVariableRemaining)}</span>
                     </div>
                     <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500" style={{width: `${Math.min(100, (dashboardStats.totalVariableRemaining / dashboardStats.totalVariableAllocated)*100)}%`}}></div>
+                        <div className="h-full bg-blue-500 transition-all duration-1000 ease-out" style={{width: `${Math.min(100, (dashboardStats.totalVariableRemaining / dashboardStats.totalVariableAllocated)*100)}%`}}></div>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t border-white/5">
                         <span className="text-slate-500 text-[10px] uppercase font-bold">Savings Secured</span>
                         <span className="text-emerald-400 font-bold text-sm">{formatMoney(dashboardStats.savingsGoal)}</span>
                     </div>
                </div>
-               
-               <button onClick={() => setIsEditing(true)} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors"><Edit2 size={16}/></button>
+               <button onClick={() => setIsEditing(true)} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors bg-slate-950/50 rounded-full"><Edit2 size={16}/></button>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* VARIABLE CATEGORIES */}
               <div className="space-y-4">
-                  <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2">
-                      <ShoppingBag size={14} className="text-blue-500"/> Variable Budgets
-                  </h3>
-                  {dashboardStats.categoriesDetails.filter(c => c.type === 'VARIABLE').map(cat => {
+                  <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><ShoppingBag size={14} className="text-blue-500"/> Variable Budgets</h3>
+                  {dashboardStats.categoriesDetails.filter(c => c.type === 'VARIABLE').map((cat, idx) => {
                       const pctLeft = Math.max(0, Math.min(100, (cat.remaining / cat.allocated) * 100));
                       return (
-                          <div key={cat.id} className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 hover:border-slate-700 transition-colors">
+                          <div 
+                            key={cat.id} 
+                            className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:translate-x-1 animate-slide-up"
+                            style={{animationDelay: `${idx * 100}ms`, opacity: 0}}
+                          >
                               <div className="flex justify-between items-start mb-2">
                                   <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-xl border border-slate-800">
-                                          {cat.icon}
-                                      </div>
-                                      <div>
-                                          <h4 className="font-bold text-white text-sm">{cat.name}</h4>
-                                          <p className="text-[10px] text-slate-500">{formatMoney(cat.remaining)} left</p>
-                                      </div>
+                                      <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-xl border border-slate-800 shadow-sm">{cat.icon}</div>
+                                      <div><h4 className="font-bold text-white text-sm">{cat.name}</h4><p className="text-[10px] text-slate-500">{formatMoney(cat.remaining)} left</p></div>
                                   </div>
-                                  <div className="text-right">
-                                      <p className="text-base font-bold text-white font-mono">{formatMoneyPrecise(cat.dailyLimit)}</p>
-                                      <p className="text-[9px] text-slate-500 font-bold uppercase">/ Day</p>
-                                  </div>
+                                  <div className="text-right"><p className="text-base font-bold text-white font-mono">{formatMoneyPrecise(cat.dailyLimit)}</p><p className="text-[9px] text-slate-500 font-bold uppercase">/ Day</p></div>
                               </div>
                               <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${pctLeft < 20 ? 'bg-rose-500' : 'bg-blue-500'}`} style={{ width: `${pctLeft}%` }}></div>
+                                  <div className={`h-full rounded-full transition-all duration-1000 ease-out ${pctLeft < 20 ? 'bg-rose-500' : 'bg-blue-500'}`} style={{ width: `${pctLeft}%` }}></div>
                               </div>
                           </div>
                       );
@@ -617,32 +513,27 @@ export const Planning: React.FC = () => {
 
               {/* FIXED CATEGORIES */}
               <div className="space-y-4">
-                  <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2">
-                      <Lock size={14} className="text-rose-500"/> Fixed Costs
-                  </h3>
-                  {dashboardStats.categoriesDetails.filter(c => c.type === 'FIXED').map(cat => {
+                  <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><Lock size={14} className="text-rose-500"/> Fixed Costs</h3>
+                  {dashboardStats.categoriesDetails.filter(c => c.type === 'FIXED').map((cat, idx) => {
                       const pctPaid = Math.min(100, (cat.spent / cat.allocated) * 100);
                       const isPaid = pctPaid >= 100;
                       return (
-                          <div key={cat.id} className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90">
+                          <div 
+                            key={cat.id} 
+                            className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90 animate-slide-up"
+                            style={{animationDelay: `${(idx + 5) * 100}ms`, opacity: 0}}
+                          >
                               <div className="flex items-center gap-3">
-                                  <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-sm border border-slate-800 text-slate-500">
-                                      {cat.icon}
-                                  </div>
+                                  <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-sm border border-slate-800 text-slate-500">{cat.icon}</div>
                                   <div>
                                       <h4 className="font-bold text-slate-300 text-sm">{cat.name}</h4>
                                       <div className="flex items-center gap-2 mt-0.5">
-                                          <div className="h-1.5 w-16 bg-slate-900 rounded-full overflow-hidden">
-                                              <div className={`h-full ${isPaid ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{width: `${pctPaid}%`}}></div>
-                                          </div>
+                                          <div className="h-1.5 w-16 bg-slate-900 rounded-full overflow-hidden"><div className={`h-full transition-all duration-1000 ${isPaid ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{width: `${pctPaid}%`}}></div></div>
                                           <span className="text-[10px] text-slate-500">{isPaid ? 'Paid' : 'Pending'}</span>
                                       </div>
                                   </div>
                               </div>
-                              <div className="text-right">
-                                  <p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p>
-                                  <p className="text-[9px] text-slate-600 font-bold uppercase">/ Month</p>
-                              </div>
+                              <div className="text-right"><p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p><p className="text-[9px] text-slate-600 font-bold uppercase">/ Month</p></div>
                           </div>
                       );
                   })}

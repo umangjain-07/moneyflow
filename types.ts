@@ -86,10 +86,11 @@ export interface CategoryBudgetConfig {
 }
 
 export interface FinancialPlan {
+  currency?: string; // New: Track currency at time of plan creation
   salary: number;
-  isSalaried?: boolean; // New
-  salaryCategoryId?: string; // New
-  pfCategoryId?: string; // New
+  isSalaried?: boolean; 
+  salaryCategoryId?: string; 
+  pfCategoryId?: string; 
   savingsGoal: number;
   startDate: string;
   endDate: string;
