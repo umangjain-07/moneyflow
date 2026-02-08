@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
-import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History } from 'lucide-react';
+import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -13,6 +13,10 @@ export const Planning: React.FC = () => {
   // Plan State
   const [plan, setPlan] = useState<FinancialPlan | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Edit Target State
+  const [editTarget, setEditTarget] = useState<{ mode: 'BASELINE' | 'MONTH', key?: string }>({ mode: 'BASELINE' });
+  const [currentLabel, setCurrentLabel] = useState(''); // Acts as the Template Name
 
   // View State
   const [viewMode, setViewMode] = useState<'CURRENT' | 'HISTORY'>('CURRENT');
@@ -86,12 +90,25 @@ export const Planning: React.FC = () => {
     setIncomeStats(incStats);
 
     const existingPlan = db.getPlan();
-    
-    // Filter out INCOME categories from the budget list
     const validCats = cats.filter(c => c.type !== 'INCOME');
 
     if (existingPlan) {
         let workingPlan = { ...existingPlan };
+        
+        // --- DATA MIGRATION ---
+        if (workingPlan.monthlyOverrides) {
+            const newOverrides: any = {};
+            Object.entries(workingPlan.monthlyOverrides).forEach(([k, v]: [string, any]) => {
+                if (Array.isArray(v)) {
+                    newOverrides[k] = { configs: v, label: '' };
+                } else {
+                    newOverrides[k] = v;
+                }
+            });
+            workingPlan.monthlyOverrides = newOverrides;
+        }
+
+        // Currency Conversion Logic
         if (workingPlan.currency && workingPlan.currency !== currentSettings.currency) {
             workingPlan.salary = db.convertAmount(workingPlan.salary, workingPlan.currency, currentSettings.currency);
             workingPlan.savingsGoal = db.convertAmount(workingPlan.savingsGoal, workingPlan.currency, currentSettings.currency);
@@ -99,6 +116,27 @@ export const Planning: React.FC = () => {
                 ...c,
                 allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
             }));
+            
+            if(workingPlan.monthlyOverrides) {
+                Object.keys(workingPlan.monthlyOverrides).forEach(key => {
+                    const override = workingPlan.monthlyOverrides![key];
+                    if (override && override.configs) {
+                        override.configs = override.configs.map(c => ({
+                            ...c,
+                            allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
+                        }));
+                    }
+                });
+            }
+            if(workingPlan.budgetTemplates) {
+                workingPlan.budgetTemplates = workingPlan.budgetTemplates.map(t => ({
+                    ...t,
+                    configs: t.configs.map(c => ({
+                        ...c,
+                        allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
+                    }))
+                }));
+            }
             workingPlan.currency = currentSettings.currency; 
         }
 
@@ -111,20 +149,9 @@ export const Planning: React.FC = () => {
         setSalaryCat(workingPlan.salaryCategoryId || '');
         setPfCat(workingPlan.pfCategoryId || '');
         
-        const mergedConfigs = validCats.map(c => {
-            const existing = workingPlan.categoryConfigs ? workingPlan.categoryConfigs.find(conf => conf.categoryId === c.id) : null;
-            if (existing) {
-                if (!existing.period) existing.period = c.defaultFrequency || 'MONTHLY_NET'; 
-                return existing;
-            }
-            return {
-                categoryId: c.id,
-                type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
-                allocatedAmount: stats[c.id] || 0,
-                period: c.defaultFrequency || 'MONTHLY_NET'
-            } as CategoryBudgetConfig;
-        });
-        setCatConfigs(mergedConfigs);
+        if (!isEditing) {
+             loadConfigsForScope(workingPlan, 'BASE', validCats, stats);
+        }
     } else {
         setIsEditing(true);
         const start = now.toISOString().split('T')[0];
@@ -140,6 +167,47 @@ export const Planning: React.FC = () => {
         }));
         setCatConfigs(initialConfigs as CategoryBudgetConfig[]);
     }
+  };
+
+  const loadConfigsForScope = (p: FinancialPlan, scopeKey: string, validCats: Category[], stats: Record<string, number>) => {
+      let sourceConfigs = p.categoryConfigs;
+      let label = '';
+      
+      if (scopeKey !== 'BASE' && p.monthlyOverrides && p.monthlyOverrides[scopeKey]) {
+          sourceConfigs = p.monthlyOverrides[scopeKey].configs;
+          label = p.monthlyOverrides[scopeKey].label || '';
+      } 
+      
+      setCurrentLabel(label);
+
+      const mergedConfigs = validCats.map(c => {
+          const existing = sourceConfigs ? sourceConfigs.find(conf => conf.categoryId === c.id) : null;
+          if (existing) {
+              if (!existing.period) existing.period = c.defaultFrequency || 'MONTHLY_NET'; 
+              return existing;
+          }
+          return {
+              categoryId: c.id,
+              type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
+              allocatedAmount: scopeKey === 'BASE' ? (stats[c.id] || 0) : 0, 
+              period: c.defaultFrequency || 'MONTHLY_NET'
+          } as CategoryBudgetConfig;
+      });
+      
+      if (scopeKey !== 'BASE' && (!p.monthlyOverrides || !p.monthlyOverrides[scopeKey])) {
+           const baseConfigs = p.categoryConfigs;
+           setCatConfigs(validCats.map(c => {
+               const base = baseConfigs.find(b => b.categoryId === c.id);
+               return base ? { ...base } : {
+                   categoryId: c.id,
+                   type: 'VARIABLE',
+                   allocatedAmount: 0,
+                   period: 'MONTHLY_NET'
+               };
+           }));
+      } else {
+          setCatConfigs(mergedConfigs);
+      }
   };
 
   useEffect(() => {
@@ -187,9 +255,50 @@ export const Planning: React.FC = () => {
   };
 
   const handleSavePlan = () => {
+      // 1. Validation: Name is Mandatory
+      if (!currentLabel || currentLabel.trim().length === 0) {
+          alert("A Budget Name is required. Please name this configuration (e.g., 'Standard Month', 'Vacation', 'Lean Mode').");
+          return;
+      }
+
       const salaryNum = parseFloat(salary) || 0;
       const savingsNum = parseFloat(savingsGoal) || 0;
       if (salaryNum <= 0) return alert("Salary/Income is required");
+
+      const existingPlan = plan || {
+          categoryConfigs: [],
+          salary: 0,
+          savingsGoal: 0,
+          startDate: '',
+          endDate: ''
+      };
+
+      const newOverrides = { ...(existingPlan.monthlyOverrides || {}) };
+      let newBaseConfigs = existingPlan.categoryConfigs;
+
+      // 2. Update Template List (Auto-Save as Template)
+      let newTemplates = [...(existingPlan.budgetTemplates || [])];
+      const existingIndex = newTemplates.findIndex(t => t.name.toLowerCase() === currentLabel.trim().toLowerCase());
+      
+      if (existingIndex > -1) {
+          // Update existing template
+          newTemplates[existingIndex] = { ...newTemplates[existingIndex], configs: catConfigs };
+      } else {
+          // Create new template
+          newTemplates.push({
+              id: Date.now().toString(),
+              name: currentLabel.trim(),
+              configs: catConfigs
+          });
+      }
+
+      // 3. Apply to Current View (Base or Month)
+      if (editTarget.mode === 'BASELINE') {
+          newBaseConfigs = catConfigs;
+      } else if (editTarget.mode === 'MONTH' && editTarget.key) {
+          // Saving this config as the specific override for this month, referenced by name
+          newOverrides[editTarget.key] = { configs: catConfigs, label: currentLabel.trim() };
+      }
 
       const newPlan: FinancialPlan = {
           currency: settings.currency, 
@@ -200,12 +309,57 @@ export const Planning: React.FC = () => {
           savingsGoal: savingsNum,
           startDate,
           endDate,
-          categoryConfigs: catConfigs
+          categoryConfigs: newBaseConfigs,
+          monthlyOverrides: newOverrides,
+          budgetTemplates: newTemplates
       };
 
       db.savePlan(newPlan);
       setPlan(newPlan);
       setIsEditing(false);
+      setEditTarget({ mode: 'BASELINE' }); 
+      setCurrentLabel('');
+  };
+
+  const handleDeleteOverride = () => {
+      if (editTarget.mode === 'MONTH' && editTarget.key && plan) {
+          const newOverrides = { ...(plan.monthlyOverrides || {}) };
+          delete newOverrides[editTarget.key];
+          
+          const newPlan = { ...plan, monthlyOverrides: newOverrides };
+          db.savePlan(newPlan);
+          setPlan(newPlan);
+          setIsEditing(false);
+          setEditTarget({ mode: 'BASELINE' });
+      }
+  };
+
+  const handleApplyTemplate = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const templateId = e.target.value;
+      if (!templateId || !plan?.budgetTemplates) return;
+      
+      const template = plan.budgetTemplates.find(t => t.id === templateId);
+      if (template) {
+          // Merge Logic: Ensure all current categories exist
+          const validCats = categories.filter(c => c.type !== 'INCOME');
+          const merged = validCats.map(c => {
+              const tConf = template.configs.find(tc => tc.categoryId === c.id);
+              if (tConf) return { ...tConf }; // Clone config from template
+              
+              // Fallback for new categories not in old template
+              return { 
+                  categoryId: c.id, 
+                  type: 'VARIABLE', 
+                  allocatedAmount: 0, 
+                  period: 'MONTHLY_NET' 
+              } as CategoryBudgetConfig;
+          });
+          
+          setCatConfigs(merged);
+          setCurrentLabel(template.name);
+      }
+      // Reset select value to allow re-selecting the same option if needed
+      e.target.value = ''; 
   };
 
   const navigateHistory = (dir: -1 | 1) => {
@@ -215,8 +369,27 @@ export const Planning: React.FC = () => {
       setHistoryDate(newDate);
   };
 
+  const handleEditMonthBudget = () => {
+      if (!plan) return;
+      const key = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
+      setEditTarget({ mode: 'MONTH', key });
+      const validCats = categories.filter(c => c.type !== 'INCOME');
+      loadConfigsForScope(plan, key, validCats, historyStats);
+      setIsEditing(true);
+  };
+
   const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const formatMoneyPrecise = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // Helper to get active config for a specific month
+  const getActiveConfigs = (targetDate: Date) => {
+      if (!plan) return [];
+      const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
+      if (plan.monthlyOverrides && plan.monthlyOverrides[monthKey]) {
+          return plan.monthlyOverrides[monthKey].configs;
+      }
+      return plan.categoryConfigs;
+  };
 
   // --- STATS & COMPUTATIONS ---
   
@@ -231,6 +404,7 @@ export const Planning: React.FC = () => {
   const dashboardStats = useMemo(() => {
       if (!plan || viewMode !== 'CURRENT') return null;
       const now = new Date();
+      const activeConfigs = getActiveConfigs(now);
       const end = new Date(plan.endDate);
       const daysLeft = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
       const currentYear = now.getFullYear();
@@ -250,7 +424,7 @@ export const Planning: React.FC = () => {
 
           if (t.date >= plan.startDate && t.date <= plan.endDate && isExpenseOrInvest) {
               spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
-              const conf = plan.categoryConfigs.find(c => c.categoryId === t.categoryId);
+              const conf = activeConfigs.find(c => c.categoryId === t.categoryId);
               if (conf?.type === 'VARIABLE') totalVariableSpent += val;
               if (conf?.type === 'FIXED' && conf.period !== 'YEARLY') totalFixedSpent += val; 
           }
@@ -260,16 +434,15 @@ export const Planning: React.FC = () => {
           }
       });
 
-      const totalVariableAllocated = plan.categoryConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0);
+      const totalVariableAllocated = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0);
       const totalVariableRemaining = totalVariableAllocated - totalVariableSpent;
       const overallDailyLimit = Math.max(0, totalVariableRemaining / daysLeft);
 
-      const categoriesDetails = plan.categoryConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
+      const categoriesDetails = activeConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
           const cat = categories.find(c => c.id === conf.categoryId);
           const isYearly = conf.period === 'YEARLY';
           
           const allocated = conf.allocatedAmount; 
-          
           let displayAllocated = allocated;
           let relevantSpent = spentMap[conf.categoryId] || 0;
           let remaining = allocated - relevantSpent;
@@ -323,9 +496,8 @@ export const Planning: React.FC = () => {
     } else if (historyType === 'YEAR') {
         start = new Date(historyDate.getFullYear(), 0, 1);
         if (historyDate.getFullYear() === now.getFullYear()) {
-            // If current year, assume YTD view
             end = now;
-            const monthsPassed = now.getMonth() + 1; // e.g. Feb = 2
+            const monthsPassed = now.getMonth() + 1; 
             multiplier = monthsPassed;
         } else {
             end = new Date(historyDate.getFullYear(), 12, 0);
@@ -341,13 +513,26 @@ export const Planning: React.FC = () => {
         multiplier = Math.max(1, months);
     }
     
-    // String Comparison for Date Range (Inclusive)
     const sStr = start.toISOString().split('T')[0];
     const eStr = end.toISOString().split('T')[0];
 
     const spentMap: Record<string, number> = {};
-    let totalSpent = 0;
+    const targetMap: Record<string, number> = {}; 
     
+    let totalSpent = 0;
+    let cursor = new Date(start);
+    cursor.setDate(1);
+
+    while(cursor <= end) {
+        const configs = getActiveConfigs(cursor);
+        configs.forEach(c => {
+            if(c.type !== 'IGNORE') {
+                targetMap[c.categoryId] = (targetMap[c.categoryId] || 0) + c.allocatedAmount;
+            }
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+    }
+
     transactions.forEach(t => {
          if (t.date >= sStr && t.date <= eStr) {
              const acc = accounts.find(a => a.id === t.accountId);
@@ -359,14 +544,20 @@ export const Planning: React.FC = () => {
          }
     });
 
-    const categoriesData = plan.categoryConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
-        const cat = categories.find(c => c.id === conf.categoryId);
-        const baseAlloc = conf.allocatedAmount; 
-        const targetAlloc = baseAlloc * multiplier;
-        const spent = spentMap[conf.categoryId] || 0;
+    const baseKeys = plan.categoryConfigs.map(c => c.categoryId);
+    const allKeys = Array.from(new Set([...baseKeys, ...Object.keys(targetMap)]));
+
+    const categoriesData = allKeys.map(catId => {
+        const cat = categories.find(c => c.id === catId);
+        const baseConf = plan.categoryConfigs.find(c => c.categoryId === catId);
+        const targetAlloc = targetMap[catId] || 0;
+        const spent = spentMap[catId] || 0;
         
+        if (targetAlloc === 0 && spent === 0) return null; 
+
         return {
-            ...conf,
+            categoryId: catId,
+            type: baseConf?.type || 'VARIABLE',
             name: cat?.name,
             icon: cat?.icon,
             target: targetAlloc,
@@ -374,24 +565,31 @@ export const Planning: React.FC = () => {
             pct: targetAlloc > 0 ? Math.min(100, (spent / targetAlloc) * 100) : (spent > 0 ? 100 : 0),
             status: spent > targetAlloc ? 'OVER' : 'UNDER'
         };
-    }).sort((a,b) => b.spent - a.spent);
+    }).filter(Boolean).sort((a: any,b: any) => b.spent - a.spent);
 
-    const totalBudget = categoriesData.reduce((sum, c) => sum + c.target, 0);
+    const totalBudget = Object.values(targetMap).reduce((sum, v) => sum + v, 0);
     const totalVariance = totalBudget - totalSpent;
     
+    const currentMonthKey = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
+    const override = plan.monthlyOverrides?.[currentMonthKey];
+    const hasOverride = historyType === 'MONTH' && !!override;
+    const currentOverrideLabel = hasOverride ? override?.label : '';
+
     return {
         start, end,
         totalSpent,
         totalBudget,
         totalVariance,
-        categoriesData
+        categoriesData,
+        hasOverride,
+        currentOverrideLabel
     };
   }, [viewMode, historyType, historyDate, transactions, plan, accounts, categories, settings]);
 
   // --- RENDER ---
 
   if (isEditing || !plan) {
-      // ... (Edit UI - same as before)
+      // ... (Edit UI)
       const buffer = previewStats.buffer;
       const isNegative = buffer < 0;
       const groupedConfigs = {
@@ -474,13 +672,63 @@ export const Planning: React.FC = () => {
 
       return (
           <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-500">
-              <div className="flex items-center justify-between">
-                  <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Sparkles className="text-emerald-500" size={24}/> Planner Setup</h1>
-                  {plan && <button onClick={() => setIsEditing(false)} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl">Cancel</button>}
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                  <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                      <Sparkles className="text-emerald-500" size={24}/> 
+                      {editTarget.mode === 'BASELINE' ? 'Planner Baseline' : `Custom: ${editTarget.key}`}
+                  </h1>
+                  
+                  <div className="flex items-center gap-3">
+                      {editTarget.mode === 'MONTH' && (
+                          <button 
+                            onClick={handleDeleteOverride}
+                            className="px-4 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-rose-500 hover:text-white transition-all"
+                          >
+                              <RotateCcw size={14} /> Reset to Global
+                          </button>
+                      )}
+                      {plan && <button onClick={() => { setIsEditing(false); setEditTarget({mode:'BASELINE'}); }} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl">Cancel</button>}
+                  </div>
+              </div>
+
+              {/* UNIFIED TEMPLATE CONTROL */}
+              <div className="bg-[#0f172a] border border-slate-800 p-4 rounded-xl flex flex-col md:flex-row gap-4 items-center justify-between shadow-lg">
+                  <div className="flex-1 w-full space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                          <LayoutTemplate size={12} /> Budget Template <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="flex gap-2">
+                          <div className="relative group flex-shrink-0 w-1/3 md:w-auto">
+                              <select 
+                                className="appearance-none bg-slate-900 border border-slate-800 text-emerald-400 text-xs font-bold rounded-lg pl-3 pr-8 py-2.5 outline-none hover:border-emerald-500/30 cursor-pointer w-full transition-all"
+                                onChange={handleApplyTemplate}
+                                value=""
+                              >
+                                  <option value="" disabled>Apply Template...</option>
+                                  {plan?.budgetTemplates?.map(t => (
+                                      <option key={t.id} value={t.id}>{t.name}</option>
+                                  ))}
+                                  {(!plan?.budgetTemplates || plan.budgetTemplates.length === 0) && <option disabled>No saved templates</option>}
+                              </select>
+                              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
+                          </div>
+                          
+                          <input 
+                            type="text" 
+                            placeholder="Name required (e.g. Standard Month)" 
+                            className={`flex-1 bg-slate-950 border rounded-lg px-3 py-2 text-sm text-white outline-none transition-all placeholder:text-slate-600 ${!currentLabel ? 'border-rose-500/30 focus:border-rose-500' : 'border-slate-800 focus:border-indigo-500/50'}`}
+                            value={currentLabel}
+                            onChange={(e) => setCurrentLabel(e.target.value)}
+                          />
+                      </div>
+                      <p className="text-[10px] text-slate-600">
+                          Saving creates/updates a reusable template named above and applies it here.
+                      </p>
+                  </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* ... Same Edit Form Layout ... */}
+                  {/* ... Edit Form Layout ... */}
                   <div className="lg:col-span-1 space-y-6">
                       <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
                           <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
@@ -550,7 +798,9 @@ export const Planning: React.FC = () => {
                               </div>
                           </div>
                           {isNegative && <div className="text-xs text-rose-500 bg-rose-500/10 p-2 rounded border border-rose-500/20 animate-pulse">Over Budget! Expenses exceed income.</div>}
-                          <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">Generate Plan</button>
+                          <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">
+                              {editTarget.mode === 'MONTH' ? 'Save Override & Template' : 'Save Baseline & Template'}
+                          </button>
                       </div>
                   </div>
                   <div className="lg:col-span-2 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col h-[700px] shadow-2xl">
@@ -620,7 +870,7 @@ export const Planning: React.FC = () => {
                             <span className="text-emerald-400 font-bold text-sm">{formatMoney(dashboardStats.savingsGoal)}</span>
                         </div>
                   </div>
-                  <button onClick={() => setIsEditing(true)} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors bg-slate-950/50 rounded-full"><Edit2 size={16}/></button>
+                  <button onClick={() => { setEditTarget({ mode: 'BASELINE' }); setIsEditing(true); }} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors bg-slate-950/50 rounded-full"><Edit2 size={16}/></button>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -784,16 +1034,31 @@ export const Planning: React.FC = () => {
                     {historyType !== 'ALL' && (
                         <div className="flex items-center gap-4">
                             <button onClick={() => navigateHistory(-1)} className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><ChevronLeft size={16}/></button>
-                            <div className="text-center w-32">
+                            <div className="text-center min-w-[120px]">
                                 <span className="block text-sm font-bold text-white">
                                     {historyType === 'MONTH' 
                                         ? historyDate.toLocaleDateString('en-US', {month: 'long', year: 'numeric'}) 
                                         : historyDate.getFullYear()
                                     }
                                 </span>
+                                {historyType === 'MONTH' && (
+                                    <span className={`text-[9px] font-black uppercase tracking-widest block mt-0.5 ${historicalStats.hasOverride ? 'text-indigo-400' : 'text-slate-600'}`}>
+                                        {historicalStats.hasOverride ? (historicalStats.currentOverrideLabel ? historicalStats.currentOverrideLabel : 'Custom Budget') : 'Global Baseline'}
+                                    </span>
+                                )}
                             </div>
                             <button onClick={() => navigateHistory(1)} className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><ChevronRight size={16}/></button>
                         </div>
+                    )}
+
+                    {historyType === 'MONTH' && (
+                        <button 
+                            onClick={handleEditMonthBudget}
+                            className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-sm"
+                        >
+                            <Settings2 size={14} className={historicalStats.hasOverride ? 'text-indigo-400' : 'text-slate-500'} />
+                            <span>Customize</span>
+                        </button>
                     )}
                 </div>
 

@@ -115,6 +115,12 @@ export const Transactions: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
   const [search, setSearch] = useState('');
   
+  // Filters
+  const [filterType, setFilterType] = useState<string>('ALL');
+  const [filterCategory, setFilterCategory] = useState<string>('ALL');
+  const [filterStartDate, setFilterStartDate] = useState<string>('');
+  const [filterEndDate, setFilterEndDate] = useState<string>('');
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransactionType>('EXPENSE');
@@ -258,11 +264,17 @@ export const Transactions: React.FC = () => {
     }
   };
 
-  const filteredTransactions = transactions.filter(t => 
-    t.description.toLowerCase().includes(search.toLowerCase()) ||
-    t.amount.toString().includes(search) ||
-    t.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filteredTransactions = transactions.filter(t => {
+    const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) ||
+                          t.amount.toString().includes(search) ||
+                          t.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
+    
+    const matchesType = filterType === 'ALL' || t.type === filterType;
+    const matchesCategory = filterCategory === 'ALL' || t.categoryId === filterCategory;
+    const matchesDate = (!filterStartDate || t.date >= filterStartDate) && (!filterEndDate || t.date <= filterEndDate);
+
+    return matchesSearch && matchesType && matchesCategory && matchesDate;
+  });
 
   const currentFormAccount = accounts.find(a => a.id === formData.accountId);
   const currentFormSymbol = currentFormAccount ? getSymbol(currentFormAccount.currency) : settings.currencySymbol;
@@ -271,23 +283,79 @@ export const Transactions: React.FC = () => {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-2xl font-bold text-slate-100">Transactions</h1>
-        
-        <div className="flex gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64 group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-emerald-400 transition-colors" size={18} />
+        <button onClick={handleOpenAdd} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/20 active:scale-95 w-full md:w-auto justify-center">
+            <Plus size={18} />
+            <span className="font-medium">New</span>
+        </button>
+      </div>
+
+      {/* FILTER BAR */}
+      <div className="flex flex-col md:flex-row gap-3 bg-slate-900/50 p-3 rounded-2xl border border-slate-800">
+          <div className="relative flex-1 group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-emerald-400 transition-colors" size={16} />
             <input 
               type="text" 
               placeholder="Search history..." 
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 text-slate-200 rounded-xl outline-none focus:border-emerald-500/50 transition-all"
+              className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 text-slate-200 rounded-xl outline-none focus:border-emerald-500/50 transition-all text-sm"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <button onClick={handleOpenAdd} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/20 active:scale-95">
-            <Plus size={18} />
-            <span className="font-medium">New</span>
-          </button>
-        </div>
+          
+          <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0 custom-scrollbar">
+              <div className="relative min-w-[120px]">
+                  <select 
+                    value={filterType} 
+                    onChange={e => setFilterType(e.target.value)}
+                    className="w-full appearance-none bg-slate-950 border border-slate-800 text-slate-300 rounded-xl py-2 pl-3 pr-8 outline-none focus:border-emerald-500/50 text-xs font-bold uppercase tracking-wide cursor-pointer"
+                  >
+                      <option value="ALL">All Types</option>
+                      <option value="INCOME">Income</option>
+                      <option value="EXPENSE">Expense</option>
+                      <option value="INVESTMENT">Investment</option>
+                      <option value="TRANSFER">Transfer</option>
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
+              </div>
+
+              <div className="relative min-w-[140px]">
+                  <select 
+                    value={filterCategory} 
+                    onChange={e => setFilterCategory(e.target.value)}
+                    className="w-full appearance-none bg-slate-950 border border-slate-800 text-slate-300 rounded-xl py-2 pl-3 pr-8 outline-none focus:border-emerald-500/50 text-xs font-bold uppercase tracking-wide cursor-pointer"
+                  >
+                      <option value="ALL">All Categories</option>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-xl px-2">
+                  <input 
+                    type="date" 
+                    className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
+                    value={filterStartDate}
+                    onChange={e => setFilterStartDate(e.target.value)}
+                  />
+                  <span className="text-slate-600">-</span>
+                  <input 
+                    type="date" 
+                    className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
+                    value={filterEndDate}
+                    onChange={e => setFilterEndDate(e.target.value)}
+                  />
+              </div>
+              
+              {(filterType !== 'ALL' || filterCategory !== 'ALL' || filterStartDate || filterEndDate) && (
+                  <button 
+                    onClick={() => { setFilterType('ALL'); setFilterCategory('ALL'); setFilterStartDate(''); setFilterEndDate(''); setSearch(''); }}
+                    className="p-2 bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-colors"
+                    title="Clear Filters"
+                  >
+                      <X size={14} />
+                  </button>
+              )}
+          </div>
       </div>
 
       <div className="hidden md:block bg-slate-900/50 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
@@ -316,6 +384,11 @@ export const Transactions: React.FC = () => {
                     handleDelete={handleDelete}
                 />
               ))}
+              {filteredTransactions.length === 0 && (
+                  <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-slate-500 font-bold">No transactions found matching your criteria.</td>
+                  </tr>
+              )}
             </tbody>
         </table>
       </div>
@@ -334,6 +407,9 @@ export const Transactions: React.FC = () => {
                     handleDelete={handleDelete}
                 />
           ))}
+          {filteredTransactions.length === 0 && (
+              <div className="py-12 text-center text-slate-500 font-bold border border-dashed border-slate-800 rounded-xl">No transactions found.</div>
+          )}
       </div>
 
       {isModalOpen && (
