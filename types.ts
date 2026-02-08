@@ -29,6 +29,7 @@ export interface Category {
   necessity?: 'NEED' | 'WANT'; 
   color?: string;
   icon?: string;
+  defaultFrequency?: 'DAILY' | 'MONTHLY' | 'YEARLY'; // New: User preference for frequency
 }
 
 export interface Transaction {

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -114,14 +114,15 @@ export const Planning: React.FC = () => {
         const mergedConfigs = validCats.map(c => {
             const existing = workingPlan.categoryConfigs ? workingPlan.categoryConfigs.find(conf => conf.categoryId === c.id) : null;
             if (existing) {
-                if (!existing.period) existing.period = 'MONTHLY'; // Migration
+                // Respect saved period, fallback to category default or monthly
+                if (!existing.period) existing.period = c.defaultFrequency || 'MONTHLY'; 
                 return existing;
             }
             return {
                 categoryId: c.id,
                 type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
                 allocatedAmount: stats[c.id] || 0,
-                period: 'MONTHLY'
+                period: c.defaultFrequency || 'MONTHLY'
             } as CategoryBudgetConfig;
         });
         setCatConfigs(mergedConfigs);
@@ -136,7 +137,7 @@ export const Planning: React.FC = () => {
             categoryId: c.id,
             type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
             allocatedAmount: stats[c.id] || 0,
-            period: 'MONTHLY'
+            period: c.defaultFrequency || 'MONTHLY'
         }));
         setCatConfigs(initialConfigs as CategoryBudgetConfig[]);
     }
@@ -168,13 +169,16 @@ export const Planning: React.FC = () => {
       }));
   };
 
-  const handleAmountInput = (catId: string, inputValue: string) => {
+  const handleAmountInput = (catId: string, inputValue: string, period: string) => {
       const val = parseFloat(inputValue) || 0;
       setCatConfigs(prev => prev.map(c => {
           if (c.categoryId !== catId) return c;
+          
+          // Store EVERYTHING as Monthly for logic consistency
           let monthlyEquivalent = val;
-          if (c.period === 'DAILY') monthlyEquivalent = val * DAYS_IN_MONTH;
-          else if (c.period === 'YEARLY') monthlyEquivalent = val / MONTHS_IN_YEAR;
+          if (period === 'DAILY') monthlyEquivalent = val * DAYS_IN_MONTH;
+          else if (period === 'YEARLY') monthlyEquivalent = val / MONTHS_IN_YEAR;
+          
           return { ...c, allocatedAmount: monthlyEquivalent };
       }));
   };
@@ -225,21 +229,33 @@ export const Planning: React.FC = () => {
       const now = new Date();
       const end = new Date(plan.endDate);
       const daysLeft = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const currentYear = now.getFullYear();
+      
       const spentMap: Record<string, number> = {};
+      const yearlySpentMap: Record<string, number> = {}; // Track spending for current calendar year
+      
       let totalVariableSpent = 0;
       let totalFixedSpent = 0;
       const currentAccounts = db.getAccounts();
 
       transactions.forEach(t => {
-          if (t.date >= plan.startDate && t.date <= plan.endDate && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
-              const acc = currentAccounts.find(a => a.id === t.accountId);
-              // Ensure we convert using current settings to match displayed plan
-              const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+          const tDate = new Date(t.date);
+          const acc = currentAccounts.find(a => a.id === t.accountId);
+          const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+          const isExpenseOrInvest = t.type === 'EXPENSE' || t.type === 'INVESTMENT';
+
+          // Standard Plan Window Tracking
+          if (t.date >= plan.startDate && t.date <= plan.endDate && isExpenseOrInvest) {
               spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
               
               const conf = plan.categoryConfigs.find(c => c.categoryId === t.categoryId);
               if (conf?.type === 'VARIABLE') totalVariableSpent += val;
-              if (conf?.type === 'FIXED') totalFixedSpent += val;
+              if (conf?.type === 'FIXED' && conf.period !== 'YEARLY') totalFixedSpent += val; // Only add non-yearly to monthly fixed spent tracking
+          }
+
+          // Yearly Tracking (Calendar Year)
+          if (tDate.getFullYear() === currentYear && isExpenseOrInvest) {
+              yearlySpentMap[t.categoryId] = (yearlySpentMap[t.categoryId] || 0) + val;
           }
       });
 
@@ -249,35 +265,46 @@ export const Planning: React.FC = () => {
 
       const categoriesDetails = plan.categoryConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
           const cat = categories.find(c => c.id === conf.categoryId);
-          const allocated = conf.allocatedAmount;
-          const spent = spentMap[conf.categoryId] || 0;
-          const remaining = allocated - spent;
+          const isYearly = conf.period === 'YEARLY';
+          
+          const allocated = conf.allocatedAmount; // Monthly basis
+          
+          let displayAllocated = allocated;
+          let relevantSpent = spentMap[conf.categoryId] || 0;
+          let remaining = allocated - relevantSpent;
+          
+          // Logic Adjustment for Display
+          if (isYearly) {
+              displayAllocated = allocated * 12;
+              relevantSpent = yearlySpentMap[conf.categoryId] || 0; // Use yearly total
+              remaining = Math.max(0, displayAllocated - relevantSpent);
+          }
+
           const dailyLimit = conf.type === 'VARIABLE' ? Math.max(0, remaining / daysLeft) : 0;
+          
           return {
               id: conf.categoryId,
               name: cat?.name || 'Unknown',
               icon: cat?.icon || '📦',
               color: cat?.color || '#64748b',
               type: conf.type,
-              allocated,
-              spent,
+              period: conf.period || 'MONTHLY',
+              allocated: displayAllocated, // Corrected for display context
+              spent: relevantSpent,
               remaining,
-              dailyLimit
+              dailyLimit,
+              isPaidYearly: isYearly && relevantSpent >= (displayAllocated * 0.9) // 90% threshold for "Paid"
           };
       }).sort((a,b) => {
           if (a.type !== b.type) return a.type === 'VARIABLE' ? -1 : 1;
           return b.allocated - a.allocated;
       });
 
-      const totalFixedAllocated = plan.categoryConfigs.filter(c => c.type === 'FIXED').reduce((s, c) => s + c.allocatedAmount, 0);
-
       return {
           daysLeft,
           totalVariableRemaining,
           overallDailyLimit,
           categoriesDetails,
-          totalFixedAllocated,
-          totalFixedSpent,
           savingsGoal: plan.savingsGoal,
           totalVariableAllocated
       };
@@ -296,10 +323,17 @@ export const Planning: React.FC = () => {
       const renderConfigRow = (conf: CategoryBudgetConfig, index: number) => {
           const cat = categories.find(c => c.id === conf.categoryId);
           const histAvg = historyStats[conf.categoryId] || 0;
+          
           let displayValue = conf.allocatedAmount;
           if (conf.period === 'DAILY') displayValue = conf.allocatedAmount / DAYS_IN_MONTH;
           else if (conf.period === 'YEARLY') displayValue = conf.allocatedAmount * MONTHS_IN_YEAR;
           
+          const togglePeriod = () => {
+             // Cycle: MONTHLY -> YEARLY -> DAILY -> MONTHLY
+             const next = conf.period === 'MONTHLY' ? 'YEARLY' : conf.period === 'YEARLY' ? 'DAILY' : 'MONTHLY';
+             handlePeriodToggle(conf.categoryId, next);
+          };
+
           return (
               <div 
                 key={conf.categoryId} 
@@ -329,28 +363,23 @@ export const Planning: React.FC = () => {
                   </div>
                   <div className="flex gap-2 items-center w-full sm:w-auto justify-end">
                       {conf.type !== 'IGNORE' ? (
-                          <>
+                          <div className={`flex items-center bg-slate-900 border rounded-lg p-0.5 transition-colors ${conf.type === 'VARIABLE' ? 'border-blue-500/30' : 'border-slate-800'}`}>
                             <input 
                                 type="number" 
                                 value={displayValue ? parseFloat(displayValue.toFixed(2)) : ''}
-                                onChange={(e) => handleAmountInput(conf.categoryId, e.target.value)}
-                                className={`w-24 bg-slate-900 border rounded p-1.5 text-right text-xs text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all ${conf.type === 'VARIABLE' ? 'border-blue-500/30' : 'border-slate-700'}`}
+                                onChange={(e) => handleAmountInput(conf.categoryId, e.target.value, conf.period)}
+                                className="w-20 bg-transparent p-1.5 text-right text-xs text-white outline-none placeholder:text-slate-700"
                                 placeholder="0"
                             />
-                            <div className="relative">
-                                <select 
-                                    className="appearance-none bg-slate-900 border border-slate-800 rounded-md py-1.5 pl-2 pr-6 text-[10px] font-bold text-slate-400 outline-none cursor-pointer w-20 hover:border-slate-600 transition-colors"
-                                    value={conf.period || 'MONTHLY'}
-                                    onChange={(e) => handlePeriodToggle(conf.categoryId, e.target.value as any)}
-                                >
-                                    <option value="DAILY">/ Day</option>
-                                    <option value="MONTHLY">/ Mo</option>
-                                    <option value="YEARLY">/ Yr</option>
-                                </select>
-                                <ChevronDown size={10} className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
-                            </div>
-                          </>
-                      ) : <span className="text-xs text-slate-600 w-24 text-center">-</span>}
+                            <button 
+                                onClick={togglePeriod} 
+                                className={`w-12 py-1.5 text-[9px] font-bold uppercase tracking-wider border-l border-slate-800 rounded-r-md transition-colors ${conf.period === 'YEARLY' ? 'bg-amber-500/20 text-amber-500' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                                title="Toggle Frequency"
+                            >
+                                {conf.period === 'YEARLY' ? '/ Yr' : conf.period === 'DAILY' ? '/ Day' : '/ Mo'}
+                            </button>
+                          </div>
+                      ) : <span className="text-xs text-slate-600 w-32 text-center">-</span>}
                   </div>
               </div>
           );
@@ -367,6 +396,7 @@ export const Planning: React.FC = () => {
                   <div className="lg:col-span-1 space-y-6">
                       <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
                           <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
+                          {/* ... Salaried Toggle and Inputs ... */}
                           <div 
                             onClick={() => setIsSalaried(!isSalaried)}
                             className={`p-3 rounded-xl border cursor-pointer transition-all duration-300 flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'}`}
@@ -439,6 +469,7 @@ export const Planning: React.FC = () => {
                   <div className="lg:col-span-2 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col h-[700px] shadow-2xl">
                       <div className="p-4 border-b border-slate-800 bg-slate-900/50 rounded-t-2xl flex justify-between items-center">
                           <h3 className="font-bold text-white text-sm">Allocations</h3>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Frequency & Amount</span>
                       </div>
                       <div className="overflow-y-auto flex-1 p-2 custom-scrollbar space-y-6">
                           <div>
@@ -515,6 +546,39 @@ export const Planning: React.FC = () => {
               <div className="space-y-4">
                   <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><Lock size={14} className="text-rose-500"/> Fixed Costs</h3>
                   {dashboardStats.categoriesDetails.filter(c => c.type === 'FIXED').map((cat, idx) => {
+                      if (cat.period === 'YEARLY') {
+                          return (
+                              <div 
+                                key={cat.id} 
+                                className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90 animate-slide-up relative overflow-hidden"
+                                style={{animationDelay: `${(idx + 5) * 100}ms`, opacity: 0}}
+                              >
+                                  {cat.isPaidYearly && <div className="absolute inset-0 bg-emerald-500/5 pointer-events-none"></div>}
+                                  <div className="flex items-center gap-3 relative z-10">
+                                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border ${cat.isPaidYearly ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/50' : 'bg-slate-900 text-slate-500 border-slate-800'}`}>
+                                          {cat.isPaidYearly ? <CheckCircle2 size={16} /> : cat.icon}
+                                      </div>
+                                      <div>
+                                          <h4 className="font-bold text-slate-300 text-sm flex items-center gap-2">
+                                              {cat.name}
+                                              <span className="text-[9px] bg-amber-500/10 text-amber-500 px-1.5 py-0.5 rounded border border-amber-500/20 font-black uppercase tracking-wider">Yearly</span>
+                                          </h4>
+                                          <div className="flex items-center gap-2 mt-0.5">
+                                              <span className={`text-[10px] font-bold ${cat.isPaidYearly ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                  {cat.isPaidYearly ? 'PAID FOR YEAR' : 'PENDING'}
+                                              </span>
+                                          </div>
+                                      </div>
+                                  </div>
+                                  <div className="text-right relative z-10">
+                                      <p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p>
+                                      <p className="text-[9px] text-slate-600 font-bold uppercase">/ Year</p>
+                                  </div>
+                              </div>
+                          );
+                      }
+
+                      // Standard Monthly Fixed
                       const pctPaid = Math.min(100, (cat.spent / cat.allocated) * 100);
                       const isPaid = pctPaid >= 100;
                       return (

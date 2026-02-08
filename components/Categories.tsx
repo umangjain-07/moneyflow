@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe, getAutoEmoji, getColorForName } from '../services/storage';
 import { Category, Transaction, TransactionType } from '../types';
-import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, RotateCcw, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon, ArrowDownToLine } from 'lucide-react';
+import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, RotateCcw, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon, ArrowDownToLine, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, CartesianGrid, Legend } from 'recharts';
 
 const COMMON_EMOJIS = [
@@ -41,7 +41,7 @@ export const Categories: React.FC = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
   const [formData, setFormData] = useState<Partial<Category>>({
-    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️'
+    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY'
   });
 
   // Merge State
@@ -63,7 +63,7 @@ export const Categories: React.FC = () => {
 
   const handleOpenEdit = (category?: Category) => {
     if (category) setFormData({ ...category });
-    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️' });
+    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY' });
     setIsEditModalOpen(true);
     setShowEmojiPicker(false);
   };
@@ -243,7 +243,8 @@ export const Categories: React.FC = () => {
                                   <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg bg-slate-950 border border-slate-800" style={{color: cat.color}}>{cat.icon}</div>
                                   <div>
                                       <p className="text-sm font-semibold text-slate-300 group-hover:text-white">{cat.name}</p>
-                                      {cat.necessity && <span className={`text-[10px] font-bold uppercase tracking-tighter ${cat.necessity === 'NEED' ? 'text-emerald-500' : 'text-amber-500'}`}>{cat.necessity}</span>}
+                                      {cat.necessity && <span className={`text-[10px] font-bold uppercase tracking-tighter mr-2 ${cat.necessity === 'NEED' ? 'text-emerald-500' : 'text-amber-500'}`}>{cat.necessity}</span>}
+                                      {cat.defaultFrequency && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded uppercase">{cat.defaultFrequency}</span>}
                                   </div>
                               </div>
                               <GripHorizontal size={14} className="text-slate-800 group-hover:text-slate-600 cursor-grab active:cursor-grabbing" />
@@ -409,6 +410,23 @@ export const Categories: React.FC = () => {
                                 ))}
                             </div>
                           </div>
+                      </div>
+
+                      {/* NEW: FREQUENCY SELECTOR */}
+                      <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><Clock size={10} /> Default Frequency</label>
+                          <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                              {(['DAILY', 'MONTHLY', 'YEARLY'] as const).map(f => (
+                                  <button 
+                                      key={f}
+                                      onClick={() => setFormData({...formData, defaultFrequency: f})}
+                                      className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase transition-all ${formData.defaultFrequency === f ? 'bg-slate-800 text-white shadow-md' : 'text-slate-600 hover:text-slate-400'}`}
+                                  >
+                                      {f}
+                                  </button>
+                              ))}
+                          </div>
+                          <p className="text-[10px] text-slate-600 mt-2 italic">* Used as default setting in Planning mode</p>
                       </div>
                       
                       <div className="pt-4 border-t border-slate-800 flex gap-4">
