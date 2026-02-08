@@ -1,4 +1,5 @@
 
+
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'INVESTMENT';
 
 export interface User {
@@ -29,7 +30,7 @@ export interface Category {
   necessity?: 'NEED' | 'WANT'; 
   color?: string;
   icon?: string;
-  defaultFrequency?: 'DAILY' | 'MONTHLY' | 'YEARLY'; // New: User preference for frequency
+  defaultFrequency?: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY'; // New: User preference for frequency
 }
 
 export interface Transaction {
@@ -83,7 +84,7 @@ export interface CategoryBudgetConfig {
     categoryId: string;
     type: 'FIXED' | 'VARIABLE' | 'IGNORE';
     allocatedAmount: number; // ALWAYS stored as Monthly equivalent for math consistency
-    period: 'DAILY' | 'MONTHLY' | 'YEARLY'; // UI state for input preference
+    period: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY'; // UI state for input preference
 }
 
 export interface FinancialPlan {

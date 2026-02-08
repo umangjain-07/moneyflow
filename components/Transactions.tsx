@@ -4,6 +4,110 @@ import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, TransactionType } from '../types';
 import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown } from 'lucide-react';
 
+// Extracted Component to prevent re-mounting flicker
+const TransactionItem: React.FC<{ 
+    tx: Transaction, 
+    isMobile: boolean, 
+    index: number,
+    categories: Category[],
+    accounts: Account[],
+    settings: any,
+    handleOpenEdit: (tx: Transaction) => void,
+    handleDelete: (id: string) => void 
+}> = ({ tx, isMobile, index, categories, accounts, settings, handleOpenEdit, handleDelete }) => {
+    const category = categories.find(c => c.id === tx.categoryId);
+    const account = accounts.find(a => a.id === tx.accountId);
+    const displayAmount = db.convertAmount(tx.amount, account?.currency || settings.currency, settings.currency);
+    const displaySymbol = settings.currencySymbol;
+
+    const getIcon = () => {
+        if (tx.type === 'INCOME') return <ArrowDownLeft size={16} />;
+        if (tx.type === 'INVESTMENT') return <TrendingUp size={16} />;
+        return <ArrowUpRight size={16} />;
+    };
+
+    const getColorClass = () => {
+        if (tx.type === 'INCOME') return 'bg-emerald-500/10 text-emerald-500';
+        if (tx.type === 'INVESTMENT') return 'bg-purple-500/10 text-purple-500';
+        return 'bg-rose-500/10 text-rose-500';
+    };
+    
+    const getAmountColor = () => {
+        if (tx.type === 'INCOME') return 'text-emerald-400';
+        if (tx.type === 'INVESTMENT') return 'text-purple-400';
+        return 'text-rose-400';
+    };
+
+    if (isMobile) {
+        return (
+          <div 
+              onClick={() => handleOpenEdit(tx)} 
+              className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 flex justify-between items-center mb-2 active:bg-slate-800 transition-all cursor-pointer animate-slide-up"
+              style={{animationDelay: `${Math.min(index * 30, 500)}ms`, opacity: 0}}
+          >
+              <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg flex items-center justify-center text-base ${getColorClass()}`}>
+                      {category?.icon ? category.icon : getIcon()}
+                  </div>
+                  <div className="flex flex-col">
+                      <p className="font-bold text-slate-200 text-sm truncate max-w-[140px] leading-tight">{tx.description}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] text-slate-500">{tx.date.substring(5)}</span>
+                          {category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>}
+                      </div>
+                  </div>
+              </div>
+              <div className="text-right">
+                  <p className={`font-mono font-bold text-sm ${getAmountColor()}`}>
+                      {tx.type === 'INCOME' ? '+' : '-'}{displaySymbol}{displayAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                  </p>
+                  <p className="text-[9px] text-slate-600">{account?.name}</p>
+              </div>
+          </div>
+        );
+    }
+
+    return (
+      <tr 
+          onClick={() => handleOpenEdit(tx)} 
+          className="hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-800/50 last:border-0 animate-slide-up"
+          style={{animationDelay: `${Math.min(index * 20, 500)}ms`, opacity: 0}}
+      >
+          <td className="px-6 py-4 text-slate-400 whitespace-nowrap font-mono text-xs">{tx.date}</td>
+          <td className="px-6 py-4 font-medium text-slate-200">
+              {tx.description}
+              {category?.necessity && tx.type === 'EXPENSE' && (
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide border border-opacity-20 ${category.necessity === 'NEED' ? 'text-emerald-500 border-emerald-500 bg-emerald-500/10' : 'text-amber-500 border-amber-500 bg-amber-500/10'}`}>
+                      {category.necessity}
+                      </span>
+              )}
+          </td>
+          <td className="px-6 py-4">
+              <span 
+                  className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border border-opacity-20 gap-1.5" 
+                  style={{ 
+                      backgroundColor: `${category?.color || '#64748b'}10`, 
+                      color: category?.color || '#64748b',
+                      borderColor: category?.color || '#64748b'
+                  }}
+              >
+                  <span>{category?.icon || '🏷️'}</span>
+                  {category?.name || 'General'}
+              </span>
+          </td>
+          <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
+          <td className={`px-6 py-4 text-right font-bold font-mono ${getAmountColor()}`}>
+              {tx.type === 'INCOME' ? '+' : '-'}{displaySymbol}{displayAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+          </td>
+          <td className="px-6 py-4 text-right">
+              <button onClick={(e) => { e.stopPropagation(); handleDelete(tx.id); }} className="text-slate-600 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100">
+              <Trash2 size={16} />
+              </button>
+          </td>
+      </tr>
+    );
+};
+
 export const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -163,100 +267,6 @@ export const Transactions: React.FC = () => {
   const currentFormAccount = accounts.find(a => a.id === formData.accountId);
   const currentFormSymbol = currentFormAccount ? getSymbol(currentFormAccount.currency) : settings.currencySymbol;
 
-  const TransactionItem: React.FC<{ tx: Transaction, isMobile: boolean, index: number }> = ({ tx, isMobile, index }) => {
-      const category = categories.find(c => c.id === tx.categoryId);
-      const account = accounts.find(a => a.id === tx.accountId);
-      const displayAmount = db.convertAmount(tx.amount, account?.currency || settings.currency, settings.currency);
-      const displaySymbol = settings.currencySymbol;
-
-      const getIcon = () => {
-          if (tx.type === 'INCOME') return <ArrowDownLeft size={16} />;
-          if (tx.type === 'INVESTMENT') return <TrendingUp size={16} />;
-          return <ArrowUpRight size={16} />;
-      };
-
-      const getColorClass = () => {
-          if (tx.type === 'INCOME') return 'bg-emerald-500/10 text-emerald-500';
-          if (tx.type === 'INVESTMENT') return 'bg-purple-500/10 text-purple-500';
-          return 'bg-rose-500/10 text-rose-500';
-      };
-      
-      const getAmountColor = () => {
-          if (tx.type === 'INCOME') return 'text-emerald-400';
-          if (tx.type === 'INVESTMENT') return 'text-purple-400';
-          return 'text-rose-400';
-      };
-
-      if (isMobile) {
-          return (
-            <div 
-                onClick={() => handleOpenEdit(tx)} 
-                className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 flex justify-between items-center mb-2 active:bg-slate-800 transition-all cursor-pointer animate-slide-up"
-                style={{animationDelay: `${Math.min(index * 30, 500)}ms`, opacity: 0}}
-            >
-                <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg flex items-center justify-center text-base ${getColorClass()}`}>
-                        {category?.icon ? category.icon : getIcon()}
-                    </div>
-                    <div className="flex flex-col">
-                        <p className="font-bold text-slate-200 text-sm truncate max-w-[140px] leading-tight">{tx.description}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[10px] text-slate-500">{tx.date.substring(5)}</span>
-                            {category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>}
-                        </div>
-                    </div>
-                </div>
-                <div className="text-right">
-                    <p className={`font-mono font-bold text-sm ${getAmountColor()}`}>
-                        {tx.type === 'INCOME' ? '+' : '-'}{displaySymbol}{displayAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                    </p>
-                    <p className="text-[9px] text-slate-600">{account?.name}</p>
-                </div>
-            </div>
-          );
-      }
-
-      return (
-        <tr 
-            onClick={() => handleOpenEdit(tx)} 
-            className="hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-800/50 last:border-0 animate-slide-up"
-            style={{animationDelay: `${Math.min(index * 20, 500)}ms`, opacity: 0}}
-        >
-            <td className="px-6 py-4 text-slate-400 whitespace-nowrap font-mono text-xs">{tx.date}</td>
-            <td className="px-6 py-4 font-medium text-slate-200">
-                {tx.description}
-                {category?.necessity && tx.type === 'EXPENSE' && (
-                        <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide border border-opacity-20 ${category.necessity === 'NEED' ? 'text-emerald-500 border-emerald-500 bg-emerald-500/10' : 'text-amber-500 border-amber-500 bg-amber-500/10'}`}>
-                        {category.necessity}
-                        </span>
-                )}
-            </td>
-            <td className="px-6 py-4">
-                <span 
-                    className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border border-opacity-20 gap-1.5" 
-                    style={{ 
-                        backgroundColor: `${category?.color || '#64748b'}10`, 
-                        color: category?.color || '#64748b',
-                        borderColor: category?.color || '#64748b'
-                    }}
-                >
-                    <span>{category?.icon || '🏷️'}</span>
-                    {category?.name || 'General'}
-                </span>
-            </td>
-            <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
-            <td className={`px-6 py-4 text-right font-bold font-mono ${getAmountColor()}`}>
-                {tx.type === 'INCOME' ? '+' : '-'}{displaySymbol}{displayAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-            </td>
-            <td className="px-6 py-4 text-right">
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(tx.id); }} className="text-slate-600 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100">
-                <Trash2 size={16} />
-                </button>
-            </td>
-        </tr>
-      );
-  };
-
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -293,13 +303,37 @@ export const Transactions: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredTransactions.map((tx, idx) => <TransactionItem key={tx.id} tx={tx} isMobile={false} index={idx} />)}
+              {filteredTransactions.map((tx, idx) => (
+                <TransactionItem 
+                    key={tx.id} 
+                    tx={tx} 
+                    isMobile={false} 
+                    index={idx}
+                    categories={categories}
+                    accounts={accounts}
+                    settings={settings}
+                    handleOpenEdit={handleOpenEdit}
+                    handleDelete={handleDelete}
+                />
+              ))}
             </tbody>
         </table>
       </div>
 
       <div className="md:hidden">
-          {filteredTransactions.map((tx, idx) => <TransactionItem key={tx.id} tx={tx} isMobile={true} index={idx} />)}
+          {filteredTransactions.map((tx, idx) => (
+                <TransactionItem 
+                    key={tx.id} 
+                    tx={tx} 
+                    isMobile={true} 
+                    index={idx}
+                    categories={categories}
+                    accounts={accounts}
+                    settings={settings}
+                    handleOpenEdit={handleOpenEdit}
+                    handleDelete={handleDelete}
+                />
+          ))}
       </div>
 
       {isModalOpen && (

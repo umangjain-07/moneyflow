@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe, getAutoEmoji, getColorForName } from '../services/storage';
 import { Category, Transaction, TransactionType } from '../types';
-import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, RotateCcw, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon, ArrowDownToLine, Clock } from 'lucide-react';
+import { Plus, Trash2, Layers, Heart, Coffee, Pencil, Sparkles, Check, GitMerge, BarChart3, TrendingUp, Tag, X, Calendar, GripHorizontal, ArrowRight, Smile, PieChart as PieIcon, ArrowDownToLine, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, CartesianGrid, Legend } from 'recharts';
 
 const COMMON_EMOJIS = [
@@ -41,7 +41,7 @@ export const Categories: React.FC = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
   const [formData, setFormData] = useState<Partial<Category>>({
-    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY'
+    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET'
   });
 
   // Merge State
@@ -63,7 +63,7 @@ export const Categories: React.FC = () => {
 
   const handleOpenEdit = (category?: Category) => {
     if (category) setFormData({ ...category });
-    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY' });
+    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET' });
     setIsEditModalOpen(true);
     setShowEmojiPicker(false);
   };
@@ -204,7 +204,6 @@ export const Categories: React.FC = () => {
             <p className="text-slate-400 text-sm">Drag categories to merge duplicates</p>
         </div>
         <div className="flex gap-2">
-            <button onClick={() => db.resetCategories()} className="p-2.5 bg-slate-900 border border-slate-800 text-slate-500 hover:text-white rounded-xl active:scale-90 transition-all"><RotateCcw size={18}/></button>
             <button onClick={() => { setAnalysisTarget(null); handleOpenEdit(); }} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-900/20 active:scale-95 transition-all"><Plus size={18}/> New</button>
         </div>
       </div>
@@ -244,7 +243,7 @@ export const Categories: React.FC = () => {
                                   <div>
                                       <p className="text-sm font-semibold text-slate-300 group-hover:text-white">{cat.name}</p>
                                       {cat.necessity && <span className={`text-[10px] font-bold uppercase tracking-tighter mr-2 ${cat.necessity === 'NEED' ? 'text-emerald-500' : 'text-amber-500'}`}>{cat.necessity}</span>}
-                                      {cat.defaultFrequency && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded uppercase">{cat.defaultFrequency}</span>}
+                                      {cat.defaultFrequency && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded uppercase">{cat.defaultFrequency.replace('_', ' ')}</span>}
                                   </div>
                               </div>
                               <GripHorizontal size={14} className="text-slate-800 group-hover:text-slate-600 cursor-grab active:cursor-grabbing" />
@@ -415,14 +414,14 @@ export const Categories: React.FC = () => {
                       {/* NEW: FREQUENCY SELECTOR */}
                       <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><Clock size={10} /> Default Frequency</label>
-                          <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
-                              {(['DAILY', 'MONTHLY', 'YEARLY'] as const).map(f => (
+                          <div className="flex flex-wrap bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                              {(['DAILY', 'MONTHLY_ONCE', 'MONTHLY_NET', 'YEARLY'] as const).map(f => (
                                   <button 
                                       key={f}
                                       onClick={() => setFormData({...formData, defaultFrequency: f})}
-                                      className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase transition-all ${formData.defaultFrequency === f ? 'bg-slate-800 text-white shadow-md' : 'text-slate-600 hover:text-slate-400'}`}
+                                      className={`flex-1 py-2.5 px-2 m-0.5 rounded-xl text-[9px] font-bold uppercase transition-all whitespace-nowrap ${formData.defaultFrequency === f ? 'bg-slate-800 text-white shadow-md' : 'text-slate-600 hover:text-slate-400'}`}
                                   >
-                                      {f}
+                                      {f.replace('MONTHLY_', 'MO. ').replace('_', ' ')}
                                   </button>
                               ))}
                           </div>
