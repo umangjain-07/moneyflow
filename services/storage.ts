@@ -76,7 +76,6 @@ class StorageService {
   
   initFirebase() {
       // 1. Strict Validation of Configuration
-      // We check if keys are missing, empty, or contain default placeholder text "your_"
       const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'appId'];
       const invalidKeys = requiredKeys.filter(key => {
           const val = FIREBASE_CONFIG[key as keyof typeof FIREBASE_CONFIG];
@@ -84,9 +83,8 @@ class StorageService {
       });
 
       if (invalidKeys.length > 0) {
-        console.warn(`[MoneyFlow] Firebase Config Incomplete (Missing/Placeholder: ${invalidKeys.join(', ')}). Switching to LOCAL OFFINE MODE.`);
-        firebaseAuth = null;
-        firestore = null;
+        console.warn(`[MoneyFlow] Firebase Config Incomplete (Missing/Placeholder: ${invalidKeys.join(', ')}). Switching to LOCAL OFFLINE MODE.`);
+        this.downgradeToLocal();
         return;
       }
 
@@ -105,9 +103,14 @@ class StorageService {
           console.log("[MoneyFlow] Firebase Initialized. Cloud Sync Active.");
       } catch (e) {
           console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
-          firebaseAuth = null;
-          firestore = null;
+          this.downgradeToLocal();
       }
+  }
+
+  private downgradeToLocal() {
+      firebaseAuth = null;
+      firestore = null;
+      notify();
   }
 
   private setSession(id: string) { localStorage.setItem('moneyflow_session', id); notify(); }
@@ -167,12 +170,24 @@ class StorageService {
   }
 
   async authenticateWithGoogle() { 
-      if (!firebaseAuth) throw new Error("Firebase is not configured. Please check your .env file or use Local Mode.");
-      const p = new GoogleAuthProvider(); 
-      const r = await signInWithPopup(firebaseAuth, p); 
-      this.setSession(r.user.uid); 
-      await this.pullFromCloud(); 
-      return true; 
+      if (!firebaseAuth) {
+          console.warn("Firebase Auth not available. Switching to local mode.");
+          return false;
+      }
+      try {
+        const p = new GoogleAuthProvider(); 
+        const r = await signInWithPopup(firebaseAuth, p); 
+        this.setSession(r.user.uid); 
+        await this.pullFromCloud(); 
+        return true; 
+      } catch (e: any) {
+          if (e.code === 'auth/invalid-api-key' || e.code === 'auth/configuration-not-found' || e.code === 'auth/project-not-found') {
+              console.error("Critical Firebase Config Error. Downgrading to local.");
+              this.downgradeToLocal();
+              return false;
+          }
+          throw e;
+      }
   }
 
   async logout() { 
@@ -194,6 +209,13 @@ class StorageService {
              await this.pullFromCloud();
              return { success: true };
           } catch(e: any) {
+             // Auto-downgrade on configuration errors to allow local usage
+             if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
+                 console.warn(`Firebase Config Error (${e.code}) detected during login. Downgrading to Local Mode.`);
+                 this.downgradeToLocal();
+                 return this.login(u, p); // Retry as local
+             }
+             
              let msg = "Login failed.";
              if(e.code === 'auth/invalid-credential') msg = "Incorrect password or user not found.";
              if(e.code === 'auth/invalid-email') msg = "Invalid username format.";
@@ -219,6 +241,13 @@ class StorageService {
              await this.pushToCloud();
              return { success: true };
           } catch(e: any) {
+             // Auto-downgrade on configuration errors
+             if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
+                 console.warn(`Firebase Config Error (${e.code}) detected during register. Downgrading to Local Mode.`);
+                 this.downgradeToLocal();
+                 return this.register(u, p); // Retry as local
+             }
+
              let msg = "Registration failed.";
              if(e.code === 'auth/email-already-in-use') msg = "Username already taken.";
              if(e.code === 'auth/weak-password') msg = "Password is too weak.";
