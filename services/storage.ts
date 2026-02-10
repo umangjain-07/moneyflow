@@ -197,7 +197,6 @@ class StorageService {
   }
 
   async login(u: string, p: string): Promise<{success: boolean, error?: string}> { 
-    
       if (firebaseAuth) {
           try {
              // Heuristic: If it doesn't look like an email, treat as username@moneyflow.app

@@ -1,6 +1,4 @@
 
-
-
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'INVESTMENT';
 
 export interface User {
@@ -92,6 +90,8 @@ export interface BudgetTemplate {
     id: string;
     name: string;
     configs: CategoryBudgetConfig[];
+    salary: number;      // Made mandatory
+    savingsGoal: number; // Made mandatory
 }
 
 export interface MonthlyBudgetOverride {
@@ -108,9 +108,11 @@ export interface FinancialPlan {
   savingsGoal: number;
   startDate: string;
   endDate: string;
+  customPeriod?: boolean; // New: If false, automatically uses current month
   categoryConfigs: CategoryBudgetConfig[];
   monthlyOverrides?: Record<string, MonthlyBudgetOverride>; // Key: "YYYY-MM"
   budgetTemplates?: BudgetTemplate[]; // Reusable templates
+  activeTemplateId?: string; // Indicates which template is currently active globally
 }
 
 export interface FinancialHealth {

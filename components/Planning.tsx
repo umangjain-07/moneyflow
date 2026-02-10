@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -28,6 +28,7 @@ export const Planning: React.FC = () => {
   const [savingsGoal, setSavingsGoal] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [isCustomPeriod, setIsCustomPeriod] = useState(false); // NEW
   
   // Salaried Specifics
   const [isSalaried, setIsSalaried] = useState(false);
@@ -131,6 +132,8 @@ export const Planning: React.FC = () => {
             if(workingPlan.budgetTemplates) {
                 workingPlan.budgetTemplates = workingPlan.budgetTemplates.map(t => ({
                     ...t,
+                    salary: t.salary ? db.convertAmount(t.salary, workingPlan.currency!, currentSettings.currency) : 0,
+                    savingsGoal: t.savingsGoal ? db.convertAmount(t.savingsGoal, workingPlan.currency!, currentSettings.currency) : 0,
                     configs: t.configs.map(c => ({
                         ...c,
                         allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
@@ -141,23 +144,43 @@ export const Planning: React.FC = () => {
         }
 
         setPlan(workingPlan);
-        setSalary(workingPlan.salary.toFixed(0));
-        setSavingsGoal(workingPlan.savingsGoal.toFixed(0));
-        setStartDate(workingPlan.startDate);
-        setEndDate(workingPlan.endDate);
-        setIsSalaried(!!workingPlan.isSalaried);
-        setSalaryCat(workingPlan.salaryCategoryId || '');
-        setPfCat(workingPlan.pfCategoryId || '');
         
+        // IMPORTANT: Only overwrite input fields if NOT editing to avoid ghosting user input
         if (!isEditing) {
-             loadConfigsForScope(workingPlan, 'BASE', validCats, stats);
+            setSalary(workingPlan.salary.toFixed(0));
+            setSavingsGoal(workingPlan.savingsGoal.toFixed(0));
+            setIsSalaried(!!workingPlan.isSalaried);
+            setSalaryCat(workingPlan.salaryCategoryId || '');
+            setPfCat(workingPlan.pfCategoryId || '');
+            setIsCustomPeriod(!!workingPlan.customPeriod);
+
+            // Date Handling: If not custom, default to Current Month for UI
+            if (!workingPlan.customPeriod) {
+                const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+                const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+                setStartDate(start);
+                setEndDate(end);
+            } else {
+                setStartDate(workingPlan.startDate);
+                setEndDate(workingPlan.endDate);
+            }
+            
+            loadConfigsForScope(workingPlan, 'BASE', validCats, stats);
+            
+            if (workingPlan.activeTemplateId) {
+                 const t = workingPlan.budgetTemplates?.find(tp => tp.id === workingPlan.activeTemplateId);
+                 if (t) setCurrentLabel(t.name);
+            }
         }
+
     } else {
         setIsEditing(true);
+        // Default new plan to Current Month
         const start = now.toISOString().split('T')[0];
         const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
         setStartDate(start);
         setEndDate(end);
+        setIsCustomPeriod(false);
         
         const initialConfigs = validCats.map(c => ({
             categoryId: c.id,
@@ -214,7 +237,7 @@ export const Planning: React.FC = () => {
     loadData();
     const unsubscribe = subscribe(loadData);
     return () => unsubscribe();
-  }, []);
+  }, []); // Only init once, subsequent updates via subscribe
 
   // --- ACTIONS ---
 
@@ -257,7 +280,7 @@ export const Planning: React.FC = () => {
   const handleSavePlan = () => {
       // 1. Validation: Name is Mandatory
       if (!currentLabel || currentLabel.trim().length === 0) {
-          alert("A Budget Name is required. Please name this configuration (e.g., 'Standard Month', 'Vacation', 'Lean Mode').");
+          alert("A Plan Name is required. Please name this configuration (e.g., 'Standard Month', 'Vacation', 'Lean Mode').");
           return;
       }
 
@@ -275,29 +298,51 @@ export const Planning: React.FC = () => {
 
       const newOverrides = { ...(existingPlan.monthlyOverrides || {}) };
       let newBaseConfigs = existingPlan.categoryConfigs;
+      let newActiveTemplateId = existingPlan.activeTemplateId;
 
       // 2. Update Template List (Auto-Save as Template)
       let newTemplates = [...(existingPlan.budgetTemplates || [])];
       const existingIndex = newTemplates.findIndex(t => t.name.toLowerCase() === currentLabel.trim().toLowerCase());
       
+      let savedTemplateId = '';
+
       if (existingIndex > -1) {
           // Update existing template
-          newTemplates[existingIndex] = { ...newTemplates[existingIndex], configs: catConfigs };
+          savedTemplateId = newTemplates[existingIndex].id;
+          newTemplates[existingIndex] = { 
+              ...newTemplates[existingIndex], 
+              configs: catConfigs,
+              salary: salaryNum,
+              savingsGoal: savingsNum
+          };
       } else {
           // Create new template
+          savedTemplateId = Date.now().toString();
           newTemplates.push({
-              id: Date.now().toString(),
+              id: savedTemplateId,
               name: currentLabel.trim(),
-              configs: catConfigs
+              configs: catConfigs,
+              salary: salaryNum,
+              savingsGoal: savingsNum
           });
       }
 
       // 3. Apply to Current View (Base or Month)
       if (editTarget.mode === 'BASELINE') {
           newBaseConfigs = catConfigs;
+          newActiveTemplateId = savedTemplateId; // Set active plan if baseline
       } else if (editTarget.mode === 'MONTH' && editTarget.key) {
           // Saving this config as the specific override for this month, referenced by name
           newOverrides[editTarget.key] = { configs: catConfigs, label: currentLabel.trim() };
+      }
+
+      // If NOT custom period, ensure dates are fresh for this save (though Logic uses dynamic dates)
+      let finalStart = startDate;
+      let finalEnd = endDate;
+      if (!isCustomPeriod) {
+          const now = new Date();
+          finalStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+          finalEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
       }
 
       const newPlan: FinancialPlan = {
@@ -307,18 +352,53 @@ export const Planning: React.FC = () => {
           salaryCategoryId: salaryCat,
           pfCategoryId: pfCat,
           savingsGoal: savingsNum,
-          startDate,
-          endDate,
+          startDate: finalStart,
+          endDate: finalEnd,
+          customPeriod: isCustomPeriod,
           categoryConfigs: newBaseConfigs,
           monthlyOverrides: newOverrides,
-          budgetTemplates: newTemplates
+          budgetTemplates: newTemplates,
+          activeTemplateId: newActiveTemplateId
+      };
+
+      db.savePlan(newPlan);
+      // Immediate local update to avoid race conditions with loadData
+      setPlan(newPlan);
+      setIsEditing(false);
+      setEditTarget({ mode: 'BASELINE' }); 
+  };
+
+  const handleQuickSwitchPlan = (templateId: string) => {
+      if (!plan || !plan.budgetTemplates) return;
+      const template = plan.budgetTemplates.find(t => t.id === templateId);
+      if (!template) return;
+
+      const validCats = categories.filter(c => c.type !== 'INCOME');
+      const mergedConfigs = validCats.map(c => {
+          const tConf = template.configs.find(tc => tc.categoryId === c.id);
+          if (tConf) return { ...tConf };
+          return { 
+              categoryId: c.id, 
+              type: 'VARIABLE', 
+              allocatedAmount: 0, 
+              period: 'MONTHLY_NET' 
+          } as CategoryBudgetConfig;
+      });
+
+      const newPlan: FinancialPlan = {
+          ...plan,
+          activeTemplateId: template.id,
+          salary: template.salary || 0,
+          savingsGoal: template.savingsGoal || 0,
+          categoryConfigs: mergedConfigs
+          // Keeps existing period settings
       };
 
       db.savePlan(newPlan);
       setPlan(newPlan);
-      setIsEditing(false);
-      setEditTarget({ mode: 'BASELINE' }); 
-      setCurrentLabel('');
+      setSalary((template.salary || 0).toString());
+      setSavingsGoal((template.savingsGoal || 0).toString());
+      setCurrentLabel(template.name);
   };
 
   const handleDeleteOverride = () => {
@@ -357,6 +437,10 @@ export const Planning: React.FC = () => {
           
           setCatConfigs(merged);
           setCurrentLabel(template.name);
+          
+          // Strict overwrite of income fields
+          setSalary((template.salary || 0).toString());
+          setSavingsGoal((template.savingsGoal || 0).toString());
       }
       // Reset select value to allow re-selecting the same option if needed
       e.target.value = ''; 
@@ -403,10 +487,25 @@ export const Planning: React.FC = () => {
 
   const dashboardStats = useMemo(() => {
       if (!plan || viewMode !== 'CURRENT') return null;
+      
       const now = new Date();
+      let effectiveStart: Date;
+      let effectiveEnd: Date;
+
+      if (plan.customPeriod) {
+          effectiveStart = new Date(plan.startDate);
+          effectiveEnd = new Date(plan.endDate);
+      } else {
+          // Dynamic Month Mode
+          effectiveStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          effectiveEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      }
+
+      // Ensure effective end is EOD
+      effectiveEnd.setHours(23, 59, 59, 999);
+
       const activeConfigs = getActiveConfigs(now);
-      const end = new Date(plan.endDate);
-      const daysLeft = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const daysLeft = Math.max(1, Math.ceil((effectiveEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
       const currentYear = now.getFullYear();
       
       const spentMap: Record<string, number> = {};
@@ -416,13 +515,16 @@ export const Planning: React.FC = () => {
       let totalFixedSpent = 0;
       const currentAccounts = db.getAccounts();
 
+      const startStr = effectiveStart.toISOString().split('T')[0];
+      const endStr = effectiveEnd.toISOString().split('T')[0];
+
       transactions.forEach(t => {
           const tDate = new Date(t.date);
           const acc = currentAccounts.find(a => a.id === t.accountId);
           const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
           const isExpenseOrInvest = t.type === 'EXPENSE' || t.type === 'INVESTMENT';
 
-          if (t.date >= plan.startDate && t.date <= plan.endDate && isExpenseOrInvest) {
+          if (t.date >= startStr && t.date <= endStr && isExpenseOrInvest) {
               spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
               const conf = activeConfigs.find(c => c.categoryId === t.categoryId);
               if (conf?.type === 'VARIABLE') totalVariableSpent += val;
@@ -479,11 +581,14 @@ export const Planning: React.FC = () => {
           overallDailyLimit,
           categoriesDetails,
           savingsGoal: plan.savingsGoal,
-          totalVariableAllocated
+          totalVariableAllocated,
+          activeTemplateId: plan.activeTemplateId,
+          salary: plan.salary
       };
   }, [plan, transactions, accounts, categories, settings, viewMode]);
 
   const historicalStats = useMemo(() => {
+    // ... (unchanged historicalStats logic)
     if (!plan || viewMode !== 'HISTORY') return null;
 
     let start: Date, end: Date, multiplier: number;
@@ -674,8 +779,8 @@ export const Planning: React.FC = () => {
           <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-500">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                   <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                      <Sparkles className="text-emerald-500" size={24}/> 
-                      {editTarget.mode === 'BASELINE' ? 'Planner Baseline' : `Custom: ${editTarget.key}`}
+                      <Settings2 className="text-emerald-500" size={24}/> 
+                      {editTarget.mode === 'BASELINE' ? 'Global Plan Configuration' : `Custom Override: ${editTarget.key}`}
                   </h1>
                   
                   <div className="flex items-center gap-3">
@@ -687,24 +792,24 @@ export const Planning: React.FC = () => {
                               <RotateCcw size={14} /> Reset to Global
                           </button>
                       )}
-                      {plan && <button onClick={() => { setIsEditing(false); setEditTarget({mode:'BASELINE'}); }} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl">Cancel</button>}
+                      {plan && <button onClick={() => { setIsEditing(false); setEditTarget({mode:'BASELINE'}); }} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl text-xs font-bold">Cancel</button>}
                   </div>
               </div>
 
               {/* UNIFIED TEMPLATE CONTROL */}
-              <div className="bg-[#0f172a] border border-slate-800 p-4 rounded-xl flex flex-col md:flex-row gap-4 items-center justify-between shadow-lg">
-                  <div className="flex-1 w-full space-y-1">
+              <div className="bg-[#0f172a] border border-slate-800 p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center justify-between shadow-lg">
+                  <div className="flex-1 w-full space-y-2">
                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                          <LayoutTemplate size={12} /> Budget Template <span className="text-rose-500">*</span>
+                          <LayoutTemplate size={12} /> Load Plan Template
                       </label>
                       <div className="flex gap-2">
                           <div className="relative group flex-shrink-0 w-1/3 md:w-auto">
                               <select 
-                                className="appearance-none bg-slate-900 border border-slate-800 text-emerald-400 text-xs font-bold rounded-lg pl-3 pr-8 py-2.5 outline-none hover:border-emerald-500/30 cursor-pointer w-full transition-all"
+                                className="appearance-none bg-slate-900 border border-slate-800 text-emerald-400 text-xs font-bold rounded-lg pl-3 pr-8 py-3 outline-none hover:border-emerald-500/30 cursor-pointer w-full transition-all"
                                 onChange={handleApplyTemplate}
                                 value=""
                               >
-                                  <option value="" disabled>Apply Template...</option>
+                                  <option value="" disabled>Load from...</option>
                                   {plan?.budgetTemplates?.map(t => (
                                       <option key={t.id} value={t.id}>{t.name}</option>
                                   ))}
@@ -715,14 +820,14 @@ export const Planning: React.FC = () => {
                           
                           <input 
                             type="text" 
-                            placeholder="Name required (e.g. Standard Month)" 
+                            placeholder="Plan Name (e.g. Standard 2024)" 
                             className={`flex-1 bg-slate-950 border rounded-lg px-3 py-2 text-sm text-white outline-none transition-all placeholder:text-slate-600 ${!currentLabel ? 'border-rose-500/30 focus:border-rose-500' : 'border-slate-800 focus:border-indigo-500/50'}`}
                             value={currentLabel}
                             onChange={(e) => setCurrentLabel(e.target.value)}
                           />
                       </div>
-                      <p className="text-[10px] text-slate-600">
-                          Saving creates/updates a reusable template named above and applies it here.
+                      <p className="text-[10px] text-slate-500">
+                          This defines your global "Active Plan". Saving will update the template name above.
                       </p>
                   </div>
               </div>
@@ -732,6 +837,34 @@ export const Planning: React.FC = () => {
                   <div className="lg:col-span-1 space-y-6">
                       <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
                           <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
+                          
+                          {/* DATE CONFIG */}
+                          <div className="p-3 bg-slate-900/50 border border-slate-800 rounded-xl space-y-3">
+                              <div className="flex justify-between items-center">
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                      <CalendarRange size={12} /> Period
+                                  </label>
+                                  <button 
+                                    onClick={() => setIsCustomPeriod(!isCustomPeriod)}
+                                    className={`text-[9px] font-bold px-2 py-1 rounded transition-colors uppercase ${isCustomPeriod ? 'text-amber-500 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10'}`}
+                                  >
+                                      {isCustomPeriod ? 'Switch to Auto' : 'Custom Dates'}
+                                  </button>
+                              </div>
+                              
+                              {!isCustomPeriod ? (
+                                  <div className="flex items-center gap-2 text-slate-300 text-xs font-medium px-2 py-1">
+                                      <CheckCircle2 size={14} className="text-emerald-500" />
+                                      <span>Current Month (Auto-Rolling)</span>
+                                  </div>
+                              ) : (
+                                  <div className="grid grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-1">
+                                      <div><label className="block text-[9px] font-bold text-slate-500 mb-1">Start</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-white focus:border-amber-500/50 outline-none" /></div>
+                                      <div><label className="block text-[9px] font-bold text-slate-500 mb-1">End</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-white focus:border-amber-500/50 outline-none" /></div>
+                                  </div>
+                              )}
+                          </div>
+
                           <div 
                             onClick={() => setIsSalaried(!isSalaried)}
                             className={`p-3 rounded-xl border cursor-pointer transition-all duration-300 flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'}`}
@@ -780,10 +913,6 @@ export const Planning: React.FC = () => {
                                    <input type="number" value={savingsGoal} onChange={e => setSavingsGoal(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500/50 transition-all" />
                               </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Start</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-emerald-500/50 outline-none transition-colors" /></div>
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">End</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-emerald-500/50 outline-none transition-colors" /></div>
-                          </div>
                       </div>
                       <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-xl transition-all hover:border-slate-700">
                           <h3 className="font-bold text-white flex items-center gap-2"><Calculator size={16} className="text-blue-400"/> Balance Check</h3>
@@ -799,7 +928,7 @@ export const Planning: React.FC = () => {
                           </div>
                           {isNegative && <div className="text-xs text-rose-500 bg-rose-500/10 p-2 rounded border border-rose-500/20 animate-pulse">Over Budget! Expenses exceed income.</div>}
                           <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">
-                              {editTarget.mode === 'MONTH' ? 'Save Override & Template' : 'Save Baseline & Template'}
+                              {editTarget.mode === 'MONTH' ? 'Save Override & Template' : 'Save Global Plan'}
                           </button>
                       </div>
                   </div>
@@ -827,24 +956,49 @@ export const Planning: React.FC = () => {
   }
 
   // --- DASHBOARD RENDER ---
+  const activeTemplate = plan?.budgetTemplates?.find(t => t.id === plan.activeTemplateId);
+  const activePlanName = activeTemplate?.name || 'Custom Configuration';
 
   return (
       <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">
           
           {/* Top Controls */}
-          <div className="flex justify-center items-center gap-2 mb-4 bg-slate-900/50 p-1.5 rounded-2xl w-fit mx-auto border border-slate-800 shadow-xl">
-             <button 
-                onClick={() => setViewMode('CURRENT')}
-                className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${viewMode === 'CURRENT' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-             >
-                Active Plan
-             </button>
-             <button 
-                onClick={() => setViewMode('HISTORY')}
-                className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2 ${viewMode === 'HISTORY' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-             >
-                <History size={14} /> History & Analysis
-             </button>
+          <div className="flex justify-between items-center">
+              <div className="flex justify-center items-center gap-2 bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800 shadow-xl">
+                <button 
+                    onClick={() => setViewMode('CURRENT')}
+                    className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${viewMode === 'CURRENT' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                    Active Plan
+                </button>
+                <button 
+                    onClick={() => setViewMode('HISTORY')}
+                    className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2 ${viewMode === 'HISTORY' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                    <History size={14} /> History & Analysis
+                </button>
+              </div>
+
+              {viewMode === 'CURRENT' && (
+                  <div className="hidden md:flex items-center gap-2 bg-slate-900/50 px-4 py-2 rounded-xl border border-slate-800">
+                       <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Global Plan:</span>
+                       <div className="relative group">
+                           <select 
+                               className="appearance-none bg-transparent text-emerald-400 text-xs font-bold uppercase tracking-wider outline-none cursor-pointer pr-4"
+                               value={plan?.activeTemplateId || ''}
+                               onChange={(e) => handleQuickSwitchPlan(e.target.value)}
+                               disabled={!plan?.budgetTemplates?.length}
+                           >
+                               <option value="" disabled>-- Select --</option>
+                               {plan?.budgetTemplates?.map(t => (
+                                   <option key={t.id} value={t.id} className="bg-slate-900 text-slate-200">{t.name}</option>
+                               ))}
+                               {!plan?.budgetTemplates?.length && <option value="" className="bg-slate-900">Default</option>}
+                           </select>
+                           {plan?.budgetTemplates?.length > 0 && <ChevronDown size={12} className="absolute right-0 top-1/2 -translate-y-1/2 text-emerald-500 pointer-events-none"/>}
+                       </div>
+                  </div>
+              )}
           </div>
 
           {viewMode === 'CURRENT' && dashboardStats && (
@@ -853,7 +1007,10 @@ export const Planning: React.FC = () => {
               <div className="bg-gradient-to-br from-indigo-900/20 to-[#0f172a] p-8 rounded-[2rem] border border-indigo-500/20 shadow-2xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 group">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-1000"></div>
                   <div className="relative z-10 text-center md:text-left">
-                      <p className="text-indigo-300 text-xs font-black uppercase tracking-widest mb-2">Safe Daily Spending</p>
+                      <div className="flex items-center gap-2 justify-center md:justify-start mb-2">
+                        <p className="text-indigo-300 text-xs font-black uppercase tracking-widest">Safe Daily Spending</p>
+                        {plan?.activeTemplateId && <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold border border-indigo-500/30 uppercase tracking-tight">{activePlanName}</span>}
+                      </div>
                       <h1 className="text-6xl font-black text-white tracking-tighter drop-shadow-xl">{formatMoneyPrecise(dashboardStats.overallDailyLimit)}</h1>
                       <p className="text-slate-400 text-sm mt-2 font-medium"><span className="text-white font-bold">{dashboardStats.daysLeft} days</span> remaining</p>
                   </div>
@@ -866,8 +1023,8 @@ export const Planning: React.FC = () => {
                             <div className="h-full bg-blue-500 transition-all duration-1000 ease-out" style={{width: `${Math.min(100, (dashboardStats.totalVariableRemaining / dashboardStats.totalVariableAllocated)*100)}%`}}></div>
                         </div>
                         <div className="flex justify-between items-center pt-2 border-t border-white/5">
-                            <span className="text-slate-500 text-[10px] uppercase font-bold">Savings Secured</span>
-                            <span className="text-emerald-400 font-bold text-sm">{formatMoney(dashboardStats.savingsGoal)}</span>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold">Income</span>
+                            <span className="text-emerald-400 font-bold text-sm">{formatMoney(dashboardStats.salary)}</span>
                         </div>
                   </div>
                   <button onClick={() => { setEditTarget({ mode: 'BASELINE' }); setIsEditing(true); }} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors bg-slate-950/50 rounded-full"><Edit2 size={16}/></button>
