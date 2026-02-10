@@ -73,29 +73,43 @@ class StorageService {
   private pushTimer: any = null;
 
   constructor() { this.initFirebase(); }
+  
   initFirebase() {
-      // Validate API Key to prevent broken Firebase initialization with placeholders
-      if (!FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.includes('your_api_key') || FIREBASE_CONFIG.apiKey.length < 10) {
-        console.warn("Firebase config invalid or missing. Switching to Local Mode.");
+      // 1. Strict Validation of Configuration
+      // We check if keys are missing, empty, or contain default placeholder text "your_"
+      const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'appId'];
+      const invalidKeys = requiredKeys.filter(key => {
+          const val = FIREBASE_CONFIG[key as keyof typeof FIREBASE_CONFIG];
+          return !val || val.includes('your_') || val.includes('undefined') || val.length < 5;
+      });
+
+      if (invalidKeys.length > 0) {
+        console.warn(`[MoneyFlow] Firebase Config Incomplete (Missing/Placeholder: ${invalidKeys.join(', ')}). Switching to LOCAL OFFINE MODE.`);
+        firebaseAuth = null;
+        firestore = null;
         return;
       }
 
+      // 2. Attempt Initialization
       try {
           const app = initializeApp(FIREBASE_CONFIG);
           firebaseAuth = getAuth(app);
           firestore = getFirestore(app);
+          
           onAuthStateChanged(firebaseAuth, async (u: any) => {
               if (u) {
                   this.setSession(u.uid);
                   await this.pullFromCloud();
               }
           });
+          console.log("[MoneyFlow] Firebase Initialized. Cloud Sync Active.");
       } catch (e) {
-          console.error("Firebase Init Failed:", e);
+          console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
           firebaseAuth = null;
           firestore = null;
       }
   }
+
   private setSession(id: string) { localStorage.setItem('moneyflow_session', id); notify(); }
   private getSession() { return localStorage.getItem('moneyflow_session'); }
   private k(key: string) { const id = this.getSession(); if (!id) throw new Error("Unauthorized"); return `user_${id}_${key}`; }
@@ -153,7 +167,7 @@ class StorageService {
   }
 
   async authenticateWithGoogle() { 
-      if (!firebaseAuth) throw new Error("Database not configured. Local mode only.");
+      if (!firebaseAuth) throw new Error("Firebase is not configured. Please check your .env file or use Local Mode.");
       const p = new GoogleAuthProvider(); 
       const r = await signInWithPopup(firebaseAuth, p); 
       this.setSession(r.user.uid); 

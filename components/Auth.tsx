@@ -61,9 +61,14 @@ export const Auth: React.FC = () => {
           <h1 className="text-3xl font-bold text-white mb-2">MoneyFlow</h1>
           <p className="text-slate-400">Your personal wealth operating system</p>
           {syncType === 'LOCAL' && (
-              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 animate-in fade-in slide-in-from-top-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Offline / Local Mode</span>
+              <div className="mt-4 flex flex-col items-center gap-2">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 animate-in fade-in slide-in-from-top-2">
+                      <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
+                      <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wide">Offline Local Mode</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 max-w-[250px] leading-tight">
+                      Setup .env with Firebase keys to enable Cloud Sync. Currently saving to device only.
+                  </p>
               </div>
           )}
         </div>
@@ -79,16 +84,16 @@ export const Auth: React.FC = () => {
                 type="button"
                 onClick={handleGoogleAuth}
                 disabled={syncType === 'LOCAL' || isCloudLoading || isAuthLoading}
-                className={`w-full bg-white text-slate-900 font-semibold py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${syncType === 'LOCAL' ? 'opacity-50 grayscale' : ''}`}
-                title={syncType === 'LOCAL' ? "Google Cloud Auth unavailable in Local Mode" : ""}
+                className={`w-full bg-white text-slate-900 font-semibold py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${syncType === 'LOCAL' ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                title={syncType === 'LOCAL' ? "Google Cloud Auth unavailable. Configure .env file." : ""}
              >
                 {isCloudLoading ? <Loader2 className="animate-spin" size={20} /> : <Chrome size={20} className="text-blue-500" />}
-                {syncType === 'LOCAL' ? 'Cloud Sync Unavailable' : (isCloudLoading ? 'Connecting...' : 'Sign in with Google')}
+                {syncType === 'LOCAL' ? 'Cloud Sync Not Configured' : (isCloudLoading ? 'Connecting...' : 'Sign in with Google')}
              </button>
              
              <div className="relative flex items-center py-2">
                  <div className="flex-grow border-t border-slate-800"></div>
-                 <span className="flex-shrink-0 mx-4 text-slate-600 text-xs uppercase">{syncType === 'LOCAL' ? 'Local Account' : 'Or with email'}</span>
+                 <span className="flex-shrink-0 mx-4 text-slate-600 text-xs uppercase">{syncType === 'LOCAL' ? 'Continue Locally' : 'Or with email'}</span>
                  <div className="flex-grow border-t border-slate-800"></div>
              </div>
 
@@ -154,7 +159,7 @@ export const Auth: React.FC = () => {
                     </>
                 ) : (
                     <>
-                        {isLogin ? 'Sign In' : 'Create Account'}
+                        {isLogin ? (syncType === 'LOCAL' ? 'Enter Locally' : 'Sign In') : 'Create Account'}
                         <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                     </>
                 )}
