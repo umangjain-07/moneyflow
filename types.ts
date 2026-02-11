@@ -77,6 +77,7 @@ export interface FixedCostItem {
   id: string;
   name: string;
   amount: number;
+  description?: string;
 }
 
 export interface CategoryBudgetConfig {
@@ -97,6 +98,7 @@ export interface BudgetTemplate {
 export interface MonthlyBudgetOverride {
     configs: CategoryBudgetConfig[];
     label?: string;
+    linkedTemplateId?: string; // NEW: If set, this month dynamically mirrors the template
 }
 
 export interface FinancialPlan {

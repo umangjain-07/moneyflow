@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -12,1268 +12,806 @@ export const Planning: React.FC = () => {
   
   // Plan State
   const [plan, setPlan] = useState<FinancialPlan | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-
-  // Edit Target State
-  const [editTarget, setEditTarget] = useState<{ mode: 'BASELINE' | 'MONTH', key?: string }>({ mode: 'BASELINE' });
-  const [currentLabel, setCurrentLabel] = useState(''); // Acts as the Template Name
 
   // View State
-  const [viewMode, setViewMode] = useState<'CURRENT' | 'HISTORY'>('CURRENT');
-  const [historyType, setHistoryType] = useState<'MONTH' | 'YEAR' | 'ALL'>('MONTH');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'STRATEGY'>('DASHBOARD');
   const [historyDate, setHistoryDate] = useState(new Date());
 
-  // Form State
-  const [salary, setSalary] = useState('');
-  const [savingsGoal, setSavingsGoal] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [isCustomPeriod, setIsCustomPeriod] = useState(false); // NEW
-  
-  // Salaried Specifics
-  const [isSalaried, setIsSalaried] = useState(false);
-  const [salaryCat, setSalaryCat] = useState('');
-  const [pfCat, setPfCat] = useState('');
+  // --- STRATEGY EDITOR STATE ---
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [draftTemplate, setDraftTemplate] = useState<BudgetTemplate | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const [historyStats, setHistoryStats] = useState<Record<string, number>>({}); // Avg spending per cat
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // The Configuration Table
-  const [catConfigs, setCatConfigs] = useState<CategoryBudgetConfig[]>([]);
-  
-  // Historical Data for Guidance
-  const [historyStats, setHistoryStats] = useState<Record<string, number>>({});
-  const [incomeStats, setIncomeStats] = useState<Record<string, number>>({});
+  // --- CREATE MODAL STATE ---
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newPlanData, setNewPlanData] = useState({ name: '', salary: 0, savingsGoal: 0 });
+  const [createAsGlobal, setCreateAsGlobal] = useState(false);
 
   const DAYS_IN_MONTH = 30; 
   const MONTHS_IN_YEAR = 12;
 
   const loadData = () => {
-    const currentSettings = db.getSettings();
-    setSettings(currentSettings);
+    setSettings(db.getSettings());
     const cats = db.getCategories();
     setCategories(cats);
-    const txs = db.getTransactions();
-    setTransactions(txs);
+    setTransactions(db.getTransactions());
     setAccounts(db.getAccounts());
     
-    // --- SMART AVERAGING LOGIC ---
+    // Calculate Historical Averages
+    const txs = db.getTransactions();
     const catMonthMap: Record<string, Record<string, number>> = {};
-    const now = new Date();
     const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(now.getFullYear() - 1);
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
     
-    const freshAccounts = db.getAccounts();
-
     txs.forEach(t => {
         const d = new Date(t.date);
-        if (d >= oneYearAgo) {
-             const monthKey = t.date.substring(0, 7); // YYYY-MM
-             const acc = freshAccounts.find(a => a.id === t.accountId);
-             const val = db.convertAmount(t.amount, acc?.currency || currentSettings.currency, currentSettings.currency);
-             
+        if (d >= oneYearAgo && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
+             const monthKey = t.date.substring(0, 7);
              if (!catMonthMap[t.categoryId]) catMonthMap[t.categoryId] = {};
-             catMonthMap[t.categoryId][monthKey] = (catMonthMap[t.categoryId][monthKey] || 0) + val;
+             catMonthMap[t.categoryId][monthKey] = (catMonthMap[t.categoryId][monthKey] || 0) + t.amount;
         }
     });
 
     const stats: Record<string, number> = {};
-    const incStats: Record<string, number> = {};
-
     Object.keys(catMonthMap).forEach(catId => {
         const months = Object.values(catMonthMap[catId]);
         const total = months.reduce((sum, val) => sum + val, 0);
-        const activeMonthCount = months.length;
-        const avg = activeMonthCount > 0 ? Math.round(total / activeMonthCount) : 0;
-        const cat = cats.find(c => c.id === catId);
-        
-        if (cat?.type === 'INCOME') incStats[catId] = avg;
-        else stats[catId] = avg;
+        stats[catId] = months.length > 0 ? Math.round(total / months.length) : 0;
     });
     setHistoryStats(stats);
-    setIncomeStats(incStats);
 
     const existingPlan = db.getPlan();
-    const validCats = cats.filter(c => c.type !== 'INCOME');
-
     if (existingPlan) {
-        let workingPlan = { ...existingPlan };
-        
-        // --- DATA MIGRATION ---
-        if (workingPlan.monthlyOverrides) {
-            const newOverrides: any = {};
-            Object.entries(workingPlan.monthlyOverrides).forEach(([k, v]: [string, any]) => {
-                if (Array.isArray(v)) {
-                    newOverrides[k] = { configs: v, label: '' };
-                } else {
-                    newOverrides[k] = v;
-                }
-            });
-            workingPlan.monthlyOverrides = newOverrides;
+        setPlan(existingPlan);
+        // Only auto-select if nothing is selected and we have templates
+        if (!selectedTemplateId && existingPlan.activeTemplateId) {
+            setSelectedTemplateId(existingPlan.activeTemplateId);
+        } else if (!selectedTemplateId && existingPlan.budgetTemplates && existingPlan.budgetTemplates.length > 0) {
+            setSelectedTemplateId(existingPlan.budgetTemplates[0].id);
         }
-
-        // Currency Conversion Logic
-        if (workingPlan.currency && workingPlan.currency !== currentSettings.currency) {
-            workingPlan.salary = db.convertAmount(workingPlan.salary, workingPlan.currency, currentSettings.currency);
-            workingPlan.savingsGoal = db.convertAmount(workingPlan.savingsGoal, workingPlan.currency, currentSettings.currency);
-            workingPlan.categoryConfigs = workingPlan.categoryConfigs.map(c => ({
-                ...c,
-                allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
-            }));
-            
-            if(workingPlan.monthlyOverrides) {
-                Object.keys(workingPlan.monthlyOverrides).forEach(key => {
-                    const override = workingPlan.monthlyOverrides![key];
-                    if (override && override.configs) {
-                        override.configs = override.configs.map(c => ({
-                            ...c,
-                            allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
-                        }));
-                    }
-                });
-            }
-            if(workingPlan.budgetTemplates) {
-                workingPlan.budgetTemplates = workingPlan.budgetTemplates.map(t => ({
-                    ...t,
-                    salary: t.salary ? db.convertAmount(t.salary, workingPlan.currency!, currentSettings.currency) : 0,
-                    savingsGoal: t.savingsGoal ? db.convertAmount(t.savingsGoal, workingPlan.currency!, currentSettings.currency) : 0,
-                    configs: t.configs.map(c => ({
-                        ...c,
-                        allocatedAmount: db.convertAmount(c.allocatedAmount, workingPlan.currency!, currentSettings.currency)
-                    }))
-                }));
-            }
-            workingPlan.currency = currentSettings.currency; 
-        }
-
-        setPlan(workingPlan);
-        
-        // IMPORTANT: Only overwrite input fields if NOT editing to avoid ghosting user input
-        if (!isEditing) {
-            setSalary(workingPlan.salary.toFixed(0));
-            setSavingsGoal(workingPlan.savingsGoal.toFixed(0));
-            setIsSalaried(!!workingPlan.isSalaried);
-            setSalaryCat(workingPlan.salaryCategoryId || '');
-            setPfCat(workingPlan.pfCategoryId || '');
-            setIsCustomPeriod(!!workingPlan.customPeriod);
-
-            // Date Handling: If not custom, default to Current Month for UI
-            if (!workingPlan.customPeriod) {
-                const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-                const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-                setStartDate(start);
-                setEndDate(end);
-            } else {
-                setStartDate(workingPlan.startDate);
-                setEndDate(workingPlan.endDate);
-            }
-            
-            loadConfigsForScope(workingPlan, 'BASE', validCats, stats);
-            
-            if (workingPlan.activeTemplateId) {
-                 const t = workingPlan.budgetTemplates?.find(tp => tp.id === workingPlan.activeTemplateId);
-                 if (t) setCurrentLabel(t.name);
-            }
-        }
-
     } else {
-        setIsEditing(true);
-        // Default new plan to Current Month
-        const start = now.toISOString().split('T')[0];
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-        setStartDate(start);
-        setEndDate(end);
-        setIsCustomPeriod(false);
-        
-        const initialConfigs = validCats.map(c => ({
-            categoryId: c.id,
-            type: (c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE')) as 'FIXED'|'VARIABLE'|'IGNORE',
-            allocatedAmount: stats[c.id] || 0,
-            period: c.defaultFrequency || 'MONTHLY_NET'
-        }));
-        setCatConfigs(initialConfigs as CategoryBudgetConfig[]);
+        // Init minimal plan if none exists
+        const initialPlan: FinancialPlan = {
+            salary: 0, savingsGoal: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString(),
+            categoryConfigs: [], monthlyOverrides: {}, budgetTemplates: []
+        };
+        db.savePlan(initialPlan);
+        setPlan(initialPlan);
     }
-  };
-
-  const loadConfigsForScope = (p: FinancialPlan, scopeKey: string, validCats: Category[], stats: Record<string, number>) => {
-      let sourceConfigs = p.categoryConfigs;
-      let label = '';
-      
-      if (scopeKey !== 'BASE' && p.monthlyOverrides && p.monthlyOverrides[scopeKey]) {
-          sourceConfigs = p.monthlyOverrides[scopeKey].configs;
-          label = p.monthlyOverrides[scopeKey].label || '';
-      } 
-      
-      setCurrentLabel(label);
-
-      const mergedConfigs = validCats.map(c => {
-          const existing = sourceConfigs ? sourceConfigs.find(conf => conf.categoryId === c.id) : null;
-          if (existing) {
-              if (!existing.period) existing.period = c.defaultFrequency || 'MONTHLY_NET'; 
-              return existing;
-          }
-          return {
-              categoryId: c.id,
-              type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
-              allocatedAmount: scopeKey === 'BASE' ? (stats[c.id] || 0) : 0, 
-              period: c.defaultFrequency || 'MONTHLY_NET'
-          } as CategoryBudgetConfig;
-      });
-      
-      if (scopeKey !== 'BASE' && (!p.monthlyOverrides || !p.monthlyOverrides[scopeKey])) {
-           const baseConfigs = p.categoryConfigs;
-           setCatConfigs(validCats.map(c => {
-               const base = baseConfigs.find(b => b.categoryId === c.id);
-               return base ? { ...base } : {
-                   categoryId: c.id,
-                   type: 'VARIABLE',
-                   allocatedAmount: 0,
-                   period: 'MONTHLY_NET'
-               };
-           }));
-      } else {
-          setCatConfigs(mergedConfigs);
-      }
   };
 
   useEffect(() => {
     loadData();
     const unsubscribe = subscribe(loadData);
     return () => unsubscribe();
-  }, []); // Only init once, subsequent updates via subscribe
+  }, []);
 
-  // --- ACTIONS ---
-
-  const computeComputedIncome = () => {
-      if (!isSalaried) return;
-      if (!salaryCat) { alert("Please select a Salary Category first."); return; }
-      const salaryAvg = incomeStats[salaryCat] || 0;
-      setSalary(salaryAvg.toString());
-  };
-
-  const handleConfigChange = (catId: string, field: keyof CategoryBudgetConfig, value: any) => {
-      setCatConfigs(prev => prev.map(c => {
-          if (c.categoryId !== catId) return c;
-          if (field === 'type' && value === 'VARIABLE') {
-              const hist = historyStats[c.categoryId] || 0;
-              return { ...c, [field]: value, allocatedAmount: c.allocatedAmount || hist };
-          }
-          return { ...c, [field]: value };
-      }));
-  };
-
-  const handleAmountInput = (catId: string, inputValue: string, period: string) => {
-      const val = parseFloat(inputValue) || 0;
-      setCatConfigs(prev => prev.map(c => {
-          if (c.categoryId !== catId) return c;
-          let monthlyEquivalent = val;
-          if (period === 'DAILY') monthlyEquivalent = val * DAYS_IN_MONTH;
-          else if (period === 'YEARLY') monthlyEquivalent = val / MONTHS_IN_YEAR;
-          return { ...c, allocatedAmount: monthlyEquivalent };
-      }));
-  };
-
-  const handlePeriodToggle = (catId: string, newPeriod: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY') => {
-      setCatConfigs(prev => prev.map(c => {
-          if (c.categoryId !== catId) return c;
-          return { ...c, period: newPeriod };
-      }));
-  };
-
-  const handleSavePlan = () => {
-      // 1. Validation: Name is Mandatory
-      if (!currentLabel || currentLabel.trim().length === 0) {
-          alert("A Plan Name is required. Please name this configuration (e.g., 'Standard Month', 'Vacation', 'Lean Mode').");
+  // Sync Draft when Selection Changes
+  useEffect(() => {
+      if (!plan || !selectedTemplateId) {
+          setDraftTemplate(null);
           return;
       }
 
-      const salaryNum = parseFloat(salary) || 0;
-      const savingsNum = parseFloat(savingsGoal) || 0;
-      if (salaryNum <= 0) return alert("Salary/Income is required");
-
-      const existingPlan = plan || {
-          categoryConfigs: [],
-          salary: 0,
-          savingsGoal: 0,
-          startDate: '',
-          endDate: ''
-      };
-
-      const newOverrides = { ...(existingPlan.monthlyOverrides || {}) };
-      let newBaseConfigs = existingPlan.categoryConfigs;
-      let newActiveTemplateId = existingPlan.activeTemplateId;
-
-      // 2. Update Template List (Auto-Save as Template)
-      let newTemplates = [...(existingPlan.budgetTemplates || [])];
-      const existingIndex = newTemplates.findIndex(t => t.name.toLowerCase() === currentLabel.trim().toLowerCase());
-      
-      let savedTemplateId = '';
-
-      if (existingIndex > -1) {
-          // Update existing template
-          savedTemplateId = newTemplates[existingIndex].id;
-          newTemplates[existingIndex] = { 
-              ...newTemplates[existingIndex], 
-              configs: catConfigs,
-              salary: salaryNum,
-              savingsGoal: savingsNum
-          };
-      } else {
-          // Create new template
-          savedTemplateId = Date.now().toString();
-          newTemplates.push({
-              id: savedTemplateId,
-              name: currentLabel.trim(),
-              configs: catConfigs,
-              salary: salaryNum,
-              savingsGoal: savingsNum
-          });
-      }
-
-      // 3. Apply to Current View (Base or Month)
-      if (editTarget.mode === 'BASELINE') {
-          newBaseConfigs = catConfigs;
-          newActiveTemplateId = savedTemplateId; // Set active plan if baseline
-      } else if (editTarget.mode === 'MONTH' && editTarget.key) {
-          // Saving this config as the specific override for this month, referenced by name
-          newOverrides[editTarget.key] = { configs: catConfigs, label: currentLabel.trim() };
-      }
-
-      // If NOT custom period, ensure dates are fresh for this save (though Logic uses dynamic dates)
-      let finalStart = startDate;
-      let finalEnd = endDate;
-      if (!isCustomPeriod) {
-          const now = new Date();
-          finalStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-          finalEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-      }
-
-      const newPlan: FinancialPlan = {
-          currency: settings.currency, 
-          salary: salaryNum,
-          isSalaried,
-          salaryCategoryId: salaryCat,
-          pfCategoryId: pfCat,
-          savingsGoal: savingsNum,
-          startDate: finalStart,
-          endDate: finalEnd,
-          customPeriod: isCustomPeriod,
-          categoryConfigs: newBaseConfigs,
-          monthlyOverrides: newOverrides,
-          budgetTemplates: newTemplates,
-          activeTemplateId: newActiveTemplateId
-      };
-
-      db.savePlan(newPlan);
-      // Immediate local update to avoid race conditions with loadData
-      setPlan(newPlan);
-      setIsEditing(false);
-      setEditTarget({ mode: 'BASELINE' }); 
-  };
-
-  const handleQuickSwitchPlan = (templateId: string) => {
-      if (!plan || !plan.budgetTemplates) return;
-      const template = plan.budgetTemplates.find(t => t.id === templateId);
-      if (!template) return;
-
-      const validCats = categories.filter(c => c.type !== 'INCOME');
-      const mergedConfigs = validCats.map(c => {
-          const tConf = template.configs.find(tc => tc.categoryId === c.id);
-          if (tConf) return { ...tConf };
-          return { 
-              categoryId: c.id, 
-              type: 'VARIABLE', 
-              allocatedAmount: 0, 
-              period: 'MONTHLY_NET' 
-          } as CategoryBudgetConfig;
-      });
-
-      const newPlan: FinancialPlan = {
-          ...plan,
-          activeTemplateId: template.id,
-          salary: template.salary || 0,
-          savingsGoal: template.savingsGoal || 0,
-          categoryConfigs: mergedConfigs
-          // Keeps existing period settings
-      };
-
-      db.savePlan(newPlan);
-      setPlan(newPlan);
-      setSalary((template.salary || 0).toString());
-      setSavingsGoal((template.savingsGoal || 0).toString());
-      setCurrentLabel(template.name);
-  };
-
-  const handleDeleteOverride = () => {
-      if (editTarget.mode === 'MONTH' && editTarget.key && plan) {
-          const newOverrides = { ...(plan.monthlyOverrides || {}) };
-          delete newOverrides[editTarget.key];
-          
-          const newPlan = { ...plan, monthlyOverrides: newOverrides };
-          db.savePlan(newPlan);
-          setPlan(newPlan);
-          setIsEditing(false);
-          setEditTarget({ mode: 'BASELINE' });
-      }
-  };
-
-  const handleApplyTemplate = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const templateId = e.target.value;
-      if (!templateId || !plan?.budgetTemplates) return;
-      
-      const template = plan.budgetTemplates.find(t => t.id === templateId);
-      if (template) {
-          // Merge Logic: Ensure all current categories exist
+      const found = plan.budgetTemplates?.find(t => t.id === selectedTemplateId);
+      if (found) {
+          // Deep copy to allow editing without immediate save
+          // Merge with current categories to ensure all cats are present
           const validCats = categories.filter(c => c.type !== 'INCOME');
-          const merged = validCats.map(c => {
-              const tConf = template.configs.find(tc => tc.categoryId === c.id);
-              if (tConf) return { ...tConf }; // Clone config from template
-              
-              // Fallback for new categories not in old template
-              return { 
-                  categoryId: c.id, 
-                  type: 'VARIABLE', 
-                  allocatedAmount: 0, 
-                  period: 'MONTHLY_NET' 
+          const mergedConfigs = validCats.map(c => {
+              const existing = found.configs.find(conf => conf.categoryId === c.id);
+              if (existing) return { ...existing };
+              return {
+                  categoryId: c.id,
+                  type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
+                  allocatedAmount: historyStats[c.id] || 0,
+                  period: c.defaultFrequency || 'MONTHLY_NET'
               } as CategoryBudgetConfig;
           });
-          
-          setCatConfigs(merged);
-          setCurrentLabel(template.name);
-          
-          // Strict overwrite of income fields
-          setSalary((template.salary || 0).toString());
-          setSavingsGoal((template.savingsGoal || 0).toString());
+
+          setDraftTemplate({ ...found, configs: mergedConfigs });
+          setDraftName(found.name);
       }
-      // Reset select value to allow re-selecting the same option if needed
-      e.target.value = ''; 
-  };
+  }, [selectedTemplateId, plan, categories.length]); // Re-run if categories change
 
-  const navigateHistory = (dir: -1 | 1) => {
-      const newDate = new Date(historyDate);
-      if (historyType === 'MONTH') newDate.setMonth(newDate.getMonth() + dir);
-      else if (historyType === 'YEAR') newDate.setFullYear(newDate.getFullYear() + dir);
-      setHistoryDate(newDate);
-  };
+  // --- LOGIC HELPERS ---
 
-  const handleEditMonthBudget = () => {
-      if (!plan) return;
-      const key = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
-      setEditTarget({ mode: 'MONTH', key });
-      const validCats = categories.filter(c => c.type !== 'INCOME');
-      loadConfigsForScope(plan, key, validCats, historyStats);
-      setIsEditing(true);
-  };
-
-  const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-  const formatMoneyPrecise = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  // Helper to get active config for a specific month
   const getActiveConfigs = (targetDate: Date) => {
       if (!plan) return [];
       const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
-      if (plan.monthlyOverrides && plan.monthlyOverrides[monthKey]) {
-          return plan.monthlyOverrides[monthKey].configs;
+      
+      const override = plan.monthlyOverrides?.[monthKey];
+      
+      // 1. Check Linked Template (The Reflective Requirement)
+      if (override?.linkedTemplateId && plan.budgetTemplates) {
+          const linkedTemplate = plan.budgetTemplates.find(t => t.id === override.linkedTemplateId);
+          if (linkedTemplate) return linkedTemplate.configs;
       }
+
+      // 2. Check Manual Override
+      if (override && override.configs.length > 0) return override.configs;
+
+      // 3. Fallback to Active Global Template
+      if (plan.activeTemplateId && plan.budgetTemplates) {
+          const globalTemplate = plan.budgetTemplates.find(t => t.id === plan.activeTemplateId);
+          if (globalTemplate) return globalTemplate.configs;
+      }
+
       return plan.categoryConfigs;
   };
 
-  // --- STATS & COMPUTATIONS ---
-  
-  const previewStats = useMemo(() => {
-      const inc = parseFloat(salary) || 0;
-      const sav = parseFloat(savingsGoal) || 0;
-      const totalFixed = catConfigs.filter(c => c.type === 'FIXED').reduce((sum, c) => sum + c.allocatedAmount, 0);
-      const totalVariable = catConfigs.filter(c => c.type === 'VARIABLE').reduce((sum, c) => sum + c.allocatedAmount, 0);
-      return { totalFixed, totalVariable, buffer: inc - sav - totalFixed - totalVariable };
-  }, [salary, savingsGoal, catConfigs]);
+  const getActivePlanMeta = (targetDate: Date) => {
+      if (!plan) return { label: 'No Plan', type: 'NONE' };
+      const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
+      const override = plan.monthlyOverrides?.[monthKey];
 
-  const dashboardStats = useMemo(() => {
-      if (!plan || viewMode !== 'CURRENT') return null;
+      if (override?.linkedTemplateId) {
+          const t = plan.budgetTemplates?.find(x => x.id === override.linkedTemplateId);
+          return { label: t?.name || 'Unknown Linked', type: 'LINKED', id: override.linkedTemplateId };
+      }
+      if (override) return { label: override.label || 'Custom Override', type: 'MANUAL', id: null };
       
-      const now = new Date();
-      let effectiveStart: Date;
-      let effectiveEnd: Date;
-
-      if (plan.customPeriod) {
-          effectiveStart = new Date(plan.startDate);
-          effectiveEnd = new Date(plan.endDate);
-      } else {
-          // Dynamic Month Mode
-          effectiveStart = new Date(now.getFullYear(), now.getMonth(), 1);
-          effectiveEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      if (plan.activeTemplateId) {
+          const t = plan.budgetTemplates?.find(x => x.id === plan.activeTemplateId);
+          return { label: t?.name || 'Global Default', type: 'GLOBAL', id: plan.activeTemplateId };
       }
 
-      // Ensure effective end is EOD
-      effectiveEnd.setHours(23, 59, 59, 999);
+      return { label: 'Baseline', type: 'BASE' };
+  };
 
-      const activeConfigs = getActiveConfigs(now);
-      const daysLeft = Math.max(1, Math.ceil((effectiveEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      const currentYear = now.getFullYear();
+  // --- ACTIONS ---
+
+  const handleCreateTemplate = () => {
+      setNewPlanData({ name: '', salary: 0, savingsGoal: 0 });
+      setCreateAsGlobal(false);
+      setIsCreateModalOpen(true);
+  };
+
+  const handleConfirmCreate = () => {
+      if (!newPlanData.name) {
+          alert("Please enter a name for your strategy.");
+          return;
+      }
       
-      const spentMap: Record<string, number> = {};
-      const yearlySpentMap: Record<string, number> = {}; 
+      const newId = Date.now().toString();
       
-      let totalVariableSpent = 0;
-      let totalFixedSpent = 0;
-      const currentAccounts = db.getAccounts();
+      // Ensure we have a plan object to work with
+      const currentPlan = plan || db.getPlan() || {
+        salary: 0, savingsGoal: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString(),
+        categoryConfigs: [], monthlyOverrides: {}, budgetTemplates: []
+      };
 
-      const startStr = effectiveStart.toISOString().split('T')[0];
-      const endStr = effectiveEnd.toISOString().split('T')[0];
+      // Ensure categories are loaded
+      const currentCats = categories.length > 0 ? categories : db.getCategories();
+      const validCats = currentCats.filter(c => c.type !== 'INCOME');
 
-      transactions.forEach(t => {
-          const tDate = new Date(t.date);
-          const acc = currentAccounts.find(a => a.id === t.accountId);
-          const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
-          const isExpenseOrInvest = t.type === 'EXPENSE' || t.type === 'INVESTMENT';
+      const initialConfigs = validCats.map(c => ({
+          categoryId: c.id,
+          type: c.type === 'INVESTMENT' ? 'FIXED' : (c.necessity === 'NEED' ? 'FIXED' : 'VARIABLE'),
+          allocatedAmount: historyStats[c.id] || 0,
+          period: c.defaultFrequency || 'MONTHLY_NET'
+      } as CategoryBudgetConfig));
 
-          if (t.date >= startStr && t.date <= endStr && isExpenseOrInvest) {
-              spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
-              const conf = activeConfigs.find(c => c.categoryId === t.categoryId);
-              if (conf?.type === 'VARIABLE') totalVariableSpent += val;
-              if (conf?.type === 'FIXED' && conf.period !== 'YEARLY') totalFixedSpent += val; 
-          }
+      const newTemplate: BudgetTemplate = {
+          id: newId,
+          name: newPlanData.name,
+          salary: newPlanData.salary,
+          savingsGoal: newPlanData.savingsGoal,
+          configs: initialConfigs
+      };
 
-          if (tDate.getFullYear() === currentYear && isExpenseOrInvest) {
-              yearlySpentMap[t.categoryId] = (yearlySpentMap[t.categoryId] || 0) + val;
+      const updatedPlan = {
+          ...currentPlan,
+          budgetTemplates: [...(currentPlan.budgetTemplates || []), newTemplate],
+          // Apply global selection if requested
+          activeTemplateId: createAsGlobal ? newId : currentPlan.activeTemplateId
+      };
+      
+      // CRITICAL: Save, Set Plan, AND Select the new template immediately
+      db.savePlan(updatedPlan);
+      setPlan(updatedPlan);
+      setSelectedTemplateId(newId);
+      setIsCreateModalOpen(false);
+  };
+
+  const handleSaveDraft = () => {
+      if (!plan || !draftTemplate) return;
+      
+      const updatedTemplates = plan.budgetTemplates?.map(t => 
+          t.id === draftTemplate.id ? { ...draftTemplate, name: draftName } : t
+      ) || [];
+
+      const updatedPlan = { ...plan, budgetTemplates: updatedTemplates };
+      db.savePlan(updatedPlan);
+      setPlan(updatedPlan);
+      
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+  };
+
+  const handleDeleteTemplate = () => {
+      if (!plan || !selectedTemplateId) return;
+      if (!confirm("Delete this plan? Months linked to it will revert to the Global Default.")) return;
+
+      const updatedTemplates = plan.budgetTemplates?.filter(t => t.id !== selectedTemplateId) || [];
+      
+      // Cleanup links in overrides
+      const newOverrides = { ...plan.monthlyOverrides };
+      Object.keys(newOverrides).forEach(k => {
+          if (newOverrides[k].linkedTemplateId === selectedTemplateId) {
+              delete newOverrides[k]; // Revert to global
           }
       });
 
-      const totalVariableAllocated = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0);
-      const totalVariableRemaining = totalVariableAllocated - totalVariableSpent;
-      const overallDailyLimit = Math.max(0, totalVariableRemaining / daysLeft);
+      const updatedPlan = { 
+          ...plan, 
+          budgetTemplates: updatedTemplates, 
+          monthlyOverrides: newOverrides,
+          activeTemplateId: plan.activeTemplateId === selectedTemplateId ? (updatedTemplates[0]?.id || '') : plan.activeTemplateId
+      };
+      
+      db.savePlan(updatedPlan);
+      setPlan(updatedPlan);
+      setSelectedTemplateId(updatedTemplates[0]?.id || null);
+  };
 
-      const categoriesDetails = activeConfigs.filter(c => c.type !== 'IGNORE').map(conf => {
-          const cat = categories.find(c => c.id === conf.categoryId);
-          const isYearly = conf.period === 'YEARLY';
-          
-          const allocated = conf.allocatedAmount; 
-          let displayAllocated = allocated;
-          let relevantSpent = spentMap[conf.categoryId] || 0;
-          let remaining = allocated - relevantSpent;
-          
-          if (isYearly) {
-              displayAllocated = allocated * 12;
-              relevantSpent = yearlySpentMap[conf.categoryId] || 0; 
-              remaining = Math.max(0, displayAllocated - relevantSpent);
-          }
-
-          const dailyLimit = conf.type === 'VARIABLE' ? Math.max(0, remaining / daysLeft) : 0;
-          
-          return {
-              id: conf.categoryId,
-              name: cat?.name || 'Unknown',
-              icon: cat?.icon || '📦',
-              color: cat?.color || '#64748b',
-              type: conf.type,
-              period: conf.period || 'MONTHLY_NET',
-              allocated: displayAllocated,
-              spent: relevantSpent,
-              remaining,
-              dailyLimit,
-              isPaidYearly: isYearly && relevantSpent >= (displayAllocated * 0.9)
-          };
-      }).sort((a,b) => {
-          if (a.type !== b.type) return a.type === 'VARIABLE' ? -1 : 1;
-          return b.allocated - a.allocated;
+  const handleConfigChange = (catId: string, field: keyof CategoryBudgetConfig, value: any) => {
+      if (!draftTemplate) return;
+      setDraftTemplate({
+          ...draftTemplate,
+          configs: draftTemplate.configs.map(c => c.categoryId === catId ? { ...c, [field]: value } : c)
       });
+  };
 
-      return {
-          daysLeft,
-          totalVariableRemaining,
-          overallDailyLimit,
-          categoriesDetails,
-          savingsGoal: plan.savingsGoal,
-          totalVariableAllocated,
-          activeTemplateId: plan.activeTemplateId,
-          salary: plan.salary
-      };
-  }, [plan, transactions, accounts, categories, settings, viewMode]);
-
-  const historicalStats = useMemo(() => {
-    // ... (unchanged historicalStats logic)
-    if (!plan || viewMode !== 'HISTORY') return null;
-
-    let start: Date, end: Date, multiplier: number;
-    const now = new Date();
-
-    if (historyType === 'MONTH') {
-        start = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1);
-        end = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0);
-        multiplier = 1;
-    } else if (historyType === 'YEAR') {
-        start = new Date(historyDate.getFullYear(), 0, 1);
-        if (historyDate.getFullYear() === now.getFullYear()) {
-            end = now;
-            const monthsPassed = now.getMonth() + 1; 
-            multiplier = monthsPassed;
-        } else {
-            end = new Date(historyDate.getFullYear(), 12, 0);
-            multiplier = 12;
-        }
-    } else {
-        // ALL TIME
-        const dates = transactions.map(t => new Date(t.date).getTime());
-        const minDate = dates.length ? new Date(Math.min(...dates)) : new Date();
-        start = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-        end = new Date(); 
-        const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
-        multiplier = Math.max(1, months);
-    }
+  const handlePeriodToggle = (catId: string) => {
+    if (!draftTemplate) return;
+    const conf = draftTemplate.configs.find(c => c.categoryId === catId);
+    if(!conf) return;
     
-    const sStr = start.toISOString().split('T')[0];
-    const eStr = end.toISOString().split('T')[0];
-
-    const spentMap: Record<string, number> = {};
-    const targetMap: Record<string, number> = {}; 
+    const next = conf.period === 'DAILY' ? 'MONTHLY_NET' :
+                 conf.period === 'MONTHLY_NET' ? 'MONTHLY_ONCE' :
+                 conf.period === 'MONTHLY_ONCE' ? 'YEARLY' : 'DAILY';
     
-    let totalSpent = 0;
-    let cursor = new Date(start);
-    cursor.setDate(1);
+    handleConfigChange(catId, 'period', next);
+  };
 
-    while(cursor <= end) {
-        const configs = getActiveConfigs(cursor);
-        configs.forEach(c => {
-            if(c.type !== 'IGNORE') {
-                targetMap[c.categoryId] = (targetMap[c.categoryId] || 0) + c.allocatedAmount;
-            }
-        });
-        cursor.setMonth(cursor.getMonth() + 1);
-    }
+  // --- BULK ASSIGNMENT LOGIC ---
+  const handleToggleMonthAssign = (monthKey: string) => {
+      if (!plan || !selectedTemplateId) return;
+      
+      const currentOverride = plan.monthlyOverrides?.[monthKey];
+      const isCurrentlyLinked = currentOverride?.linkedTemplateId === selectedTemplateId;
+      
+      const newOverrides = { ...(plan.monthlyOverrides || {}) };
 
-    transactions.forEach(t => {
-         if (t.date >= sStr && t.date <= eStr) {
-             const acc = accounts.find(a => a.id === t.accountId);
-             const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
-             if (t.type === 'EXPENSE' || t.type === 'INVESTMENT') {
-                 spentMap[t.categoryId] = (spentMap[t.categoryId] || 0) + val;
-                 totalSpent += val;
-             }
-         }
-    });
-
-    const baseKeys = plan.categoryConfigs.map(c => c.categoryId);
-    const allKeys = Array.from(new Set([...baseKeys, ...Object.keys(targetMap)]));
-
-    const categoriesData = allKeys.map(catId => {
-        const cat = categories.find(c => c.id === catId);
-        const baseConf = plan.categoryConfigs.find(c => c.categoryId === catId);
-        const targetAlloc = targetMap[catId] || 0;
-        const spent = spentMap[catId] || 0;
-        
-        if (targetAlloc === 0 && spent === 0) return null; 
-
-        return {
-            categoryId: catId,
-            type: baseConf?.type || 'VARIABLE',
-            name: cat?.name,
-            icon: cat?.icon,
-            target: targetAlloc,
-            spent: spent,
-            pct: targetAlloc > 0 ? Math.min(100, (spent / targetAlloc) * 100) : (spent > 0 ? 100 : 0),
-            status: spent > targetAlloc ? 'OVER' : 'UNDER'
-        };
-    }).filter(Boolean).sort((a: any,b: any) => b.spent - a.spent);
-
-    const totalBudget = Object.values(targetMap).reduce((sum, v) => sum + v, 0);
-    const totalVariance = totalBudget - totalSpent;
-    
-    const currentMonthKey = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
-    const override = plan.monthlyOverrides?.[currentMonthKey];
-    const hasOverride = historyType === 'MONTH' && !!override;
-    const currentOverrideLabel = hasOverride ? override?.label : '';
-
-    return {
-        start, end,
-        totalSpent,
-        totalBudget,
-        totalVariance,
-        categoriesData,
-        hasOverride,
-        currentOverrideLabel
-    };
-  }, [viewMode, historyType, historyDate, transactions, plan, accounts, categories, settings]);
-
-  // --- RENDER ---
-
-  if (isEditing || !plan) {
-      // ... (Edit UI)
-      const buffer = previewStats.buffer;
-      const isNegative = buffer < 0;
-      const groupedConfigs = {
-          FIXED: catConfigs.filter(c => categories.find(cat => cat.id === c.categoryId)?.type === 'EXPENSE'),
-          INVEST: catConfigs.filter(c => categories.find(cat => cat.id === c.categoryId)?.type === 'INVESTMENT')
-      };
-
-      const renderConfigRow = (conf: CategoryBudgetConfig, index: number) => {
-          const cat = categories.find(c => c.id === conf.categoryId);
-          const histAvg = historyStats[conf.categoryId] || 0;
-          
-          let displayValue = conf.allocatedAmount;
-          if (conf.period === 'DAILY') displayValue = conf.allocatedAmount / DAYS_IN_MONTH;
-          else if (conf.period === 'YEARLY') displayValue = conf.allocatedAmount * MONTHS_IN_YEAR;
-          
-          const togglePeriod = () => {
-             const next = conf.period === 'DAILY' ? 'MONTHLY_NET' :
-                          conf.period === 'MONTHLY_NET' ? 'MONTHLY_ONCE' :
-                          conf.period === 'MONTHLY_ONCE' ? 'YEARLY' : 'DAILY';
-             handlePeriodToggle(conf.categoryId, next);
+      if (isCurrentlyLinked) {
+          // Toggle OFF: Revert to Global Default (remove override)
+          delete newOverrides[monthKey];
+      } else {
+          // Toggle ON: Link to Current Draft Template
+          // We do NOT copy configs. We store the ID. This enables the "Immediate Reflection".
+          newOverrides[monthKey] = {
+              configs: [], // Empty because we rely on the link
+              label: draftName,
+              linkedTemplateId: selectedTemplateId
           };
+      }
 
-          const getPeriodLabel = (p: string) => {
-              if (p === 'YEARLY') return '/ Yr';
-              if (p === 'DAILY') return '/ Day';
-              if (p === 'MONTHLY_ONCE') return '/ Mo Once';
-              return '/ Mo Net';
-          };
+      const updatedPlan = { ...plan, monthlyOverrides: newOverrides };
+      db.savePlan(updatedPlan);
+      setPlan(updatedPlan);
+  };
 
-          return (
-              <div 
-                key={conf.categoryId} 
-                className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded-xl hover:border-slate-700 transition-all duration-500 gap-3 animate-slide-up"
-                style={{animationDelay: `${index * 50}ms`, opacity: 0}}
-              >
-                  <div className="flex items-center gap-3 w-full sm:w-1/3">
-                      <span className="text-lg shadow-sm">{cat?.icon}</span>
-                      <div className="min-w-0">
-                          <p className="font-bold text-slate-200 text-sm truncate">{cat?.name}</p>
-                          <div className="flex items-center gap-1.5">
-                              <p className="text-[10px] text-slate-500">Avg: {formatMoney(histAvg)}</p>
-                              {histAvg > 0 && <span className="text-[9px] text-slate-600 bg-slate-900 px-1 rounded border border-slate-800">Active</span>}
-                          </div>
-                      </div>
-                  </div>
-                  <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800 self-start sm:self-auto">
-                      {(['FIXED', 'VARIABLE', 'IGNORE'] as const).map(t => (
-                          <button 
-                            key={t}
-                            onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
-                            className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all duration-300 ${conf.type === t ? (t==='FIXED'?'bg-rose-500 text-white shadow-lg shadow-rose-900/20':t==='VARIABLE'?'bg-blue-500 text-white shadow-lg shadow-blue-900/20':'bg-slate-700 text-slate-300') : 'text-slate-600 hover:text-slate-400'}`}
-                          >
-                              {t.slice(0,3)}
-                          </button>
-                      ))}
-                  </div>
-                  <div className="flex gap-2 items-center w-full sm:w-auto justify-end">
-                      {conf.type !== 'IGNORE' ? (
-                          <div className={`flex items-center bg-slate-900 border rounded-lg p-0.5 transition-colors ${conf.type === 'VARIABLE' ? 'border-blue-500/30' : 'border-slate-800'}`}>
-                            <input 
-                                type="number" 
-                                value={displayValue ? parseFloat(displayValue.toFixed(2)) : ''}
-                                onChange={(e) => handleAmountInput(conf.categoryId, e.target.value, conf.period)}
-                                className="w-20 bg-transparent p-1.5 text-right text-xs text-white outline-none placeholder:text-slate-700"
-                                placeholder="0"
-                            />
-                            <button 
-                                onClick={togglePeriod} 
-                                className={`w-14 py-1.5 text-[9px] font-bold uppercase tracking-wider border-l border-slate-800 rounded-r-md transition-colors ${conf.period === 'YEARLY' ? 'bg-amber-500/20 text-amber-500' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-                                title="Toggle Frequency"
-                            >
-                                {getPeriodLabel(conf.period)}
-                            </button>
-                          </div>
-                      ) : <span className="text-xs text-slate-600 w-32 text-center">-</span>}
-                  </div>
-              </div>
-          );
-      };
+  const handleSetGlobal = () => {
+      if (!plan || !selectedTemplateId) return;
+      const updatedPlan = { ...plan, activeTemplateId: selectedTemplateId };
+      db.savePlan(updatedPlan);
+      setPlan(updatedPlan);
+  };
+
+  // --- RENDER HELPERS ---
+  const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+
+  const renderConfigRow = (conf: CategoryBudgetConfig) => {
+      const cat = categories.find(c => c.id === conf.categoryId);
+      if (!cat) return null;
+      
+      const displayValue = conf.period === 'DAILY' ? conf.allocatedAmount / DAYS_IN_MONTH :
+                           conf.period === 'YEARLY' ? conf.allocatedAmount * MONTHS_IN_YEAR : conf.allocatedAmount;
 
       return (
-          <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-500">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                  <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                      <Settings2 className="text-emerald-500" size={24}/> 
-                      {editTarget.mode === 'BASELINE' ? 'Global Plan Configuration' : `Custom Override: ${editTarget.key}`}
-                  </h1>
-                  
-                  <div className="flex items-center gap-3">
-                      {editTarget.mode === 'MONTH' && (
-                          <button 
-                            onClick={handleDeleteOverride}
-                            className="px-4 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-rose-500 hover:text-white transition-all"
-                          >
-                              <RotateCcw size={14} /> Reset to Global
-                          </button>
-                      )}
-                      {plan && <button onClick={() => { setIsEditing(false); setEditTarget({mode:'BASELINE'}); }} className="text-slate-500 hover:text-white transition-colors bg-slate-800/50 px-4 py-2 rounded-xl text-xs font-bold">Cancel</button>}
-                  </div>
+          <div key={conf.categoryId} className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
+              <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-lg">{cat.icon}</div>
+              <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm text-slate-200 truncate">{cat.name}</p>
+                  <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
+              </div>
+              
+              {/* Type Toggle */}
+              <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                  {(['FIXED', 'VARIABLE'] as const).map(t => (
+                      <button 
+                        key={t}
+                        onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold ${conf.type === t ? (t==='FIXED' ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white') : 'text-slate-500'}`}
+                      >
+                          {t[0]}
+                      </button>
+                  ))}
               </div>
 
-              {/* UNIFIED TEMPLATE CONTROL */}
-              <div className="bg-[#0f172a] border border-slate-800 p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center justify-between shadow-lg">
-                  <div className="flex-1 w-full space-y-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                          <LayoutTemplate size={12} /> Load Plan Template
-                      </label>
-                      <div className="flex gap-2">
-                          <div className="relative group flex-shrink-0 w-1/3 md:w-auto">
-                              <select 
-                                className="appearance-none bg-slate-900 border border-slate-800 text-emerald-400 text-xs font-bold rounded-lg pl-3 pr-8 py-3 outline-none hover:border-emerald-500/30 cursor-pointer w-full transition-all"
-                                onChange={handleApplyTemplate}
-                                value=""
-                              >
-                                  <option value="" disabled>Load from...</option>
-                                  {plan?.budgetTemplates?.map(t => (
-                                      <option key={t.id} value={t.id}>{t.name}</option>
-                                  ))}
-                                  {(!plan?.budgetTemplates || plan.budgetTemplates.length === 0) && <option disabled>No saved templates</option>}
-                              </select>
-                              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
-                          </div>
-                          
-                          <input 
-                            type="text" 
-                            placeholder="Plan Name (e.g. Standard 2024)" 
-                            className={`flex-1 bg-slate-950 border rounded-lg px-3 py-2 text-sm text-white outline-none transition-all placeholder:text-slate-600 ${!currentLabel ? 'border-rose-500/30 focus:border-rose-500' : 'border-slate-800 focus:border-indigo-500/50'}`}
-                            value={currentLabel}
-                            onChange={(e) => setCurrentLabel(e.target.value)}
-                          />
-                      </div>
-                      <p className="text-[10px] text-slate-500">
-                          This defines your global "Active Plan". Saving will update the template name above.
-                      </p>
-                  </div>
+              {/* Amount Input */}
+              <div className="flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2">
+                  <input 
+                    type="number" 
+                    value={displayValue === 0 ? '' : displayValue}
+                    onChange={(e) => {
+                        const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                        const final = conf.period === 'DAILY' ? val * DAYS_IN_MONTH : 
+                                      conf.period === 'YEARLY' ? val / MONTHS_IN_YEAR : val;
+                        handleConfigChange(conf.categoryId, 'allocatedAmount', final);
+                    }}
+                    className="w-full bg-transparent text-xs text-right text-white outline-none py-1.5"
+                    placeholder="0"
+                  />
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* ... Edit Form Layout ... */}
-                  <div className="lg:col-span-1 space-y-6">
-                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
-                          <h3 className="font-bold text-white flex items-center gap-2"><Wallet size={16} className="text-emerald-400"/> Income & Goals</h3>
-                          
-                          {/* DATE CONFIG */}
-                          <div className="p-3 bg-slate-900/50 border border-slate-800 rounded-xl space-y-3">
-                              <div className="flex justify-between items-center">
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                                      <CalendarRange size={12} /> Period
-                                  </label>
-                                  <button 
-                                    onClick={() => setIsCustomPeriod(!isCustomPeriod)}
-                                    className={`text-[9px] font-bold px-2 py-1 rounded transition-colors uppercase ${isCustomPeriod ? 'text-amber-500 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10'}`}
-                                  >
-                                      {isCustomPeriod ? 'Switch to Auto' : 'Custom Dates'}
-                                  </button>
-                              </div>
-                              
-                              {!isCustomPeriod ? (
-                                  <div className="flex items-center gap-2 text-slate-300 text-xs font-medium px-2 py-1">
-                                      <CheckCircle2 size={14} className="text-emerald-500" />
-                                      <span>Current Month (Auto-Rolling)</span>
-                                  </div>
-                              ) : (
-                                  <div className="grid grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-1">
-                                      <div><label className="block text-[9px] font-bold text-slate-500 mb-1">Start</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-white focus:border-amber-500/50 outline-none" /></div>
-                                      <div><label className="block text-[9px] font-bold text-slate-500 mb-1">End</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-white focus:border-amber-500/50 outline-none" /></div>
-                                  </div>
-                              )}
-                          </div>
-
-                          <div 
-                            onClick={() => setIsSalaried(!isSalaried)}
-                            className={`p-3 rounded-xl border cursor-pointer transition-all duration-300 flex items-center gap-3 ${isSalaried ? 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'}`}
-                          >
-                             <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${isSalaried ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-600'}`}>{isSalaried && <CheckCircle2 size={12} />}</div>
-                             <div><p className="text-xs font-bold text-white">Salaried Employee</p><p className="text-[10px] text-slate-500">Enable advanced mapping</p></div>
-                          </div>
-                          {isSalaried && (
-                            <div className="space-y-3 bg-slate-900/50 p-3 rounded-xl border border-slate-800/50 animate-in slide-in-from-top-2 fade-in">
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Salary Category</label>
-                                    <div className="relative">
-                                        <select value={salaryCat} onChange={(e) => setSalaryCat(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none transition-colors">
-                                            <option value="">-- Select --</option>
-                                            {categories.filter(c => c.type === 'INCOME').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                                        </select>
-                                        <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Provident Fund (PF)</label>
-                                    <div className="relative">
-                                        <select value={pfCat} onChange={(e) => setPfCat(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500/30 appearance-none transition-colors">
-                                            <option value="">-- Optional --</option>
-                                            {categories.filter(c => c.type === 'INVESTMENT').map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                                        </select>
-                                        <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
-                                    </div>
-                                </div>
-                            </div>
-                          )}
-                          <div>
-                              <div className="flex justify-between items-center mb-1.5">
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Monthly Income</label>
-                                {isSalaried && salaryCat && <button onClick={computeComputedIncome} className="text-[9px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 bg-blue-500/10 px-1.5 py-0.5 rounded transition-colors"><Zap size={8} /> Auto-Calc</button>}
-                              </div>
-                              <div className="relative group">
-                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold group-focus-within:text-emerald-500 transition-colors">{settings.currencySymbol}</span>
-                                   <input type="number" value={salary} onChange={e => setSalary(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-white font-mono outline-none focus:border-emerald-500/50 transition-all" />
-                              </div>
-                          </div>
-                          <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Savings Goal</label>
-                              <div className="relative group">
-                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold group-focus-within:text-emerald-500 transition-colors">{settings.currencySymbol}</span>
-                                   <input type="number" value={savingsGoal} onChange={e => setSavingsGoal(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-8 text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500/50 transition-all" />
-                              </div>
-                          </div>
-                      </div>
-                      <div className="bg-[#0f172a] p-5 rounded-2xl border border-slate-800 space-y-4 shadow-xl transition-all hover:border-slate-700">
-                          <h3 className="font-bold text-white flex items-center gap-2"><Calculator size={16} className="text-blue-400"/> Balance Check</h3>
-                          <div className="space-y-2 text-sm">
-                              <div className="flex justify-between text-slate-400"><span>Income</span> <span className="text-white">{formatMoney(parseFloat(salary)||0)}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>- Savings</span> <span className="text-emerald-500">{formatMoney(parseFloat(savingsGoal)||0)}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>- Fixed Costs</span> <span className="text-rose-500">{formatMoney(previewStats.totalFixed)}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>- Variable Budget</span> <span className="text-blue-400">{formatMoney(previewStats.totalVariable)}</span></div>
-                              <div className="border-t border-slate-800 pt-2 flex justify-between font-bold">
-                                  <span className="text-slate-200">Unallocated Buffer</span>
-                                  <span className={isNegative ? 'text-rose-500' : 'text-emerald-400'}>{formatMoney(buffer)}</span>
-                              </div>
-                          </div>
-                          {isNegative && <div className="text-xs text-rose-500 bg-rose-500/10 p-2 rounded border border-rose-500/20 animate-pulse">Over Budget! Expenses exceed income.</div>}
-                          <button onClick={handleSavePlan} disabled={isNegative} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">
-                              {editTarget.mode === 'MONTH' ? 'Save Override & Template' : 'Save Global Plan'}
-                          </button>
-                      </div>
-                  </div>
-                  <div className="lg:col-span-2 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col h-[700px] shadow-2xl">
-                      <div className="p-4 border-b border-slate-800 bg-slate-900/50 rounded-t-2xl flex justify-between items-center">
-                          <h3 className="font-bold text-white text-sm">Allocations</h3>
-                          <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Frequency & Amount</span>
-                      </div>
-                      <div className="overflow-y-auto flex-1 p-2 custom-scrollbar space-y-6">
-                          <div>
-                              <h4 className="px-2 mb-2 text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-2"><ShoppingBag size={12}/> Expenses (Fixed & Variable)</h4>
-                              <div className="space-y-1">{groupedConfigs.FIXED.map((c, i) => renderConfigRow(c, i))}</div>
-                          </div>
-                          {groupedConfigs.INVEST.length > 0 && (
-                              <div>
-                                <h4 className="px-2 mb-2 text-xs font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2"><TrendingUp size={12}/> Specific Investments</h4>
-                                <div className="space-y-1">{groupedConfigs.INVEST.map((c, i) => renderConfigRow(c, i + groupedConfigs.FIXED.length))}</div>
-                              </div>
-                          )}
-                      </div>
-                  </div>
-              </div>
+              {/* Period Toggle */}
+              <button onClick={() => handlePeriodToggle(conf.categoryId)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">
+                  <Repeat size={14} />
+              </button>
           </div>
       );
-  }
+  };
 
-  // --- DASHBOARD RENDER ---
-  const activeTemplate = plan?.budgetTemplates?.find(t => t.id === plan.activeTemplateId);
-  const activePlanName = activeTemplate?.name || 'Custom Configuration';
+  const renderDashboard = () => {
+      if (!plan) return <div className="p-10 text-center text-slate-500">Initializing...</div>;
 
-  return (
-      <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          
-          {/* Top Controls */}
-          <div className="flex justify-between items-center">
-              <div className="flex justify-center items-center gap-2 bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800 shadow-xl">
-                <button 
-                    onClick={() => setViewMode('CURRENT')}
-                    className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${viewMode === 'CURRENT' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    Active Plan
-                </button>
-                <button 
-                    onClick={() => setViewMode('HISTORY')}
-                    className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2 ${viewMode === 'HISTORY' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    <History size={14} /> History & Analysis
-                </button>
-              </div>
+      const now = new Date();
+      const currentMonthKey = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
+      const activeConfigs = getActiveConfigs(historyDate);
+      const planMeta = getActivePlanMeta(historyDate);
 
-              {viewMode === 'CURRENT' && (
-                  <div className="hidden md:flex items-center gap-2 bg-slate-900/50 px-4 py-2 rounded-xl border border-slate-800">
-                       <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Global Plan:</span>
-                       <div className="relative group">
-                           <select 
-                               className="appearance-none bg-transparent text-emerald-400 text-xs font-bold uppercase tracking-wider outline-none cursor-pointer pr-4"
-                               value={plan?.activeTemplateId || ''}
-                               onChange={(e) => handleQuickSwitchPlan(e.target.value)}
-                               disabled={!plan?.budgetTemplates?.length}
-                           >
-                               <option value="" disabled>-- Select --</option>
-                               {plan?.budgetTemplates?.map(t => (
-                                   <option key={t.id} value={t.id} className="bg-slate-900 text-slate-200">{t.name}</option>
-                               ))}
-                               {!plan?.budgetTemplates?.length && <option value="" className="bg-slate-900">Default</option>}
-                           </select>
-                           {plan?.budgetTemplates?.length > 0 && <ChevronDown size={12} className="absolute right-0 top-1/2 -translate-y-1/2 text-emerald-500 pointer-events-none"/>}
-                       </div>
-                  </div>
-              )}
-          </div>
+      // Financial Calc
+      const totalIncome = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.salary || plan.salary;
+      const totalSavings = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.savingsGoal || plan.savingsGoal;
+      const totalFixed = activeConfigs.filter(c => c.type === 'FIXED').reduce((s, c) => s + c.allocatedAmount, 0);
+      const totalVariable = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0);
+      const unallocated = totalIncome - totalSavings - totalFixed - totalVariable;
 
-          {viewMode === 'CURRENT' && dashboardStats && (
-            <>
-              {/* Top Card */}
-              <div className="bg-gradient-to-br from-indigo-900/20 to-[#0f172a] p-8 rounded-[2rem] border border-indigo-500/20 shadow-2xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 group">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-1000"></div>
-                  <div className="relative z-10 text-center md:text-left">
-                      <div className="flex items-center gap-2 justify-center md:justify-start mb-2">
-                        <p className="text-indigo-300 text-xs font-black uppercase tracking-widest">Safe Daily Spending</p>
-                        {plan?.activeTemplateId && <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold border border-indigo-500/30 uppercase tracking-tight">{activePlanName}</span>}
-                      </div>
-                      <h1 className="text-6xl font-black text-white tracking-tighter drop-shadow-xl">{formatMoneyPrecise(dashboardStats.overallDailyLimit)}</h1>
-                      <p className="text-slate-400 text-sm mt-2 font-medium"><span className="text-white font-bold">{dashboardStats.daysLeft} days</span> remaining</p>
-                  </div>
-                  <div className="bg-slate-900/50 p-6 rounded-2xl border border-white/5 backdrop-blur-sm w-full md:w-64 space-y-4 shadow-inner">
-                        <div className="flex justify-between items-center text-xs">
-                            <span className="text-slate-400 font-bold uppercase">Variable Pool</span>
-                            <span className="text-white font-mono">{formatMoney(dashboardStats.totalVariableRemaining)}</span>
+      // Expense Tracking
+      const startOfMonth = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1).toISOString().split('T')[0];
+      const endOfMonth = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0).toISOString().split('T')[0];
+      
+      const relevantTxs = transactions.filter(t => t.date >= startOfMonth && t.date <= endOfMonth && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
+      const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
+      
+      const pctUsed = totalIncome > 0 ? (totalSpent / totalIncome) * 100 : 0;
+
+      return (
+          <div className="space-y-6 animate-in fade-in">
+               {/* Header Controls */}
+               <div className="flex justify-between items-center bg-[#0f172a] p-4 rounded-2xl border border-slate-800">
+                    <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() - 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronLeft size={20}/></button>
+                    <div className="text-center">
+                        <h2 className="text-xl font-bold text-white">{historyDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2>
+                        <div className="flex items-center justify-center gap-2 mt-1">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
+                                planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                                {planMeta.label}
+                            </span>
+                            {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
                         </div>
-                        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 transition-all duration-1000 ease-out" style={{width: `${Math.min(100, (dashboardStats.totalVariableRemaining / dashboardStats.totalVariableAllocated)*100)}%`}}></div>
-                        </div>
-                        <div className="flex justify-between items-center pt-2 border-t border-white/5">
-                            <span className="text-slate-500 text-[10px] uppercase font-bold">Income</span>
-                            <span className="text-emerald-400 font-bold text-sm">{formatMoney(dashboardStats.salary)}</span>
-                        </div>
-                  </div>
-                  <button onClick={() => { setEditTarget({ mode: 'BASELINE' }); setIsEditing(true); }} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-white transition-colors bg-slate-950/50 rounded-full"><Edit2 size={16}/></button>
-              </div>
+                    </div>
+                    <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() + 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronRight size={20}/></button>
+               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* LEFT COLUMN: VARIABLE CONTINUOUS (Daily / Net) */}
-                  <div className="space-y-6">
-                    <div className="space-y-4">
-                        <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><ShoppingBag size={14} className="text-blue-500"/> Variable Budgets</h3>
-                        {dashboardStats.categoriesDetails
-                            .filter(c => c.type === 'VARIABLE' && c.period !== 'MONTHLY_ONCE')
-                            .map((cat, idx) => {
-                            const pctLeft = Math.max(0, Math.min(100, (cat.remaining / cat.allocated) * 100));
+               {/* Summary Cards */}
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Budgeted Output</p>
+                        <h3 className="text-3xl font-black text-white">{formatMoney(totalFixed + totalVariable)}</h3>
+                    </div>
+                    <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Actual Spent</p>
+                        <h3 className={`text-3xl font-black ${totalSpent > (totalFixed + totalVariable) ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
+                    </div>
+                    <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Unallocated Buffer</p>
+                        <h3 className={`text-3xl font-black ${unallocated < 0 ? 'text-rose-500' : 'text-blue-400'}`}>{formatMoney(unallocated)}</h3>
+                    </div>
+               </div>
+
+               {/* Budget Breakdown */}
+               <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                    <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
+                        <h3 className="font-bold text-white text-sm">Category Performance</h3>
+                        <div className="text-xs text-slate-500">{activeConfigs.length} Active Rules</div>
+                    </div>
+                    <div className="p-4 space-y-3">
+                        {activeConfigs.map(conf => {
+                            const cat = categories.find(c => c.id === conf.categoryId);
+                            const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
+                            const pct = Math.min(100, (spent / conf.allocatedAmount) * 100);
+                            const isOver = spent > conf.allocatedAmount;
 
                             return (
-                                <div 
-                                    key={cat.id} 
-                                    className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:translate-x-1 animate-slide-up"
-                                    style={{animationDelay: `${idx * 100}ms`, opacity: 0}}
-                                >
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-xl border border-slate-800 shadow-sm">{cat.icon}</div>
-                                            <div><h4 className="font-bold text-white text-sm">{cat.name}</h4><p className="text-[10px] text-slate-500">{formatMoney(cat.remaining)} left</p></div>
+                                <div key={conf.categoryId} className="flex items-center gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/20">
+                                    <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center text-lg shadow-sm border border-slate-800">{cat?.icon}</div>
+                                    <div className="flex-1">
+                                        <div className="flex justify-between mb-1">
+                                            <span className="text-sm font-bold text-slate-200">{cat?.name}</span>
+                                            <span className={`text-xs font-mono font-bold ${isOver ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                                {formatMoney(spent)} <span className="text-slate-600">/ {formatMoney(conf.allocatedAmount)}</span>
+                                            </span>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-base font-bold text-white font-mono">{formatMoneyPrecise(cat.dailyLimit)}</p>
-                                            <p className="text-[9px] text-slate-500 font-bold uppercase">/ Day</p>
+                                        <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
+                                            <div className={`h-full rounded-full ${isOver ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${pct}%`}}></div>
                                         </div>
-                                    </div>
-                                    <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                        <div className={`h-full rounded-full transition-all duration-1000 ease-out ${pctLeft < 20 ? 'bg-rose-500' : 'bg-blue-500'}`} style={{ width: `${pctLeft}%` }}></div>
                                     </div>
                                 </div>
                             );
                         })}
                     </div>
-                  </div>
+               </div>
+          </div>
+      );
+  };
 
-                  {/* RIGHT COLUMN: FIXED COSTS & SINGLE PAYMENTS */}
-                  <div className="space-y-6">
-                      
-                      {/* FIXED COSTS */}
-                      <div className="space-y-4">
-                          <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><Lock size={14} className="text-rose-500"/> Fixed Costs</h3>
-                          {dashboardStats.categoriesDetails.filter(c => c.type === 'FIXED').map((cat, idx) => {
-                              if (cat.period === 'YEARLY') {
-                                  return (
-                                      <div 
-                                        key={cat.id} 
-                                        className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90 animate-slide-up relative overflow-hidden"
-                                        style={{animationDelay: `${(idx + 5) * 100}ms`, opacity: 0}}
-                                      >
-                                          {cat.isPaidYearly && <div className="absolute inset-0 bg-emerald-500/5 pointer-events-none"></div>}
-                                          <div className="flex items-center gap-3 relative z-10">
-                                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border ${cat.isPaidYearly ? 'bg-emerald-500/20 text-emerald-500 border-emerald-500/50' : 'bg-slate-900 text-slate-500 border-slate-800'}`}>
-                                                  {cat.isPaidYearly ? <CheckCircle2 size={16} /> : cat.icon}
-                                              </div>
-                                              <div>
-                                                  <h4 className="font-bold text-slate-300 text-sm flex items-center gap-2">
-                                                      {cat.name}
-                                                      <span className="text-[9px] bg-amber-500/10 text-amber-500 px-1.5 py-0.5 rounded border border-amber-500/20 font-black uppercase tracking-wider">Yearly</span>
-                                                  </h4>
-                                                  <div className="flex items-center gap-2 mt-0.5">
-                                                      <span className={`text-[10px] font-bold ${cat.isPaidYearly ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                                          {cat.isPaidYearly ? 'PAID FOR YEAR' : 'PENDING'}
-                                                      </span>
-                                                  </div>
-                                              </div>
-                                          </div>
-                                          <div className="text-right relative z-10">
-                                              <p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p>
-                                              <p className="text-[9px] text-slate-600 font-bold uppercase">/ Year</p>
-                                          </div>
-                                      </div>
-                                  );
-                              }
+  const renderStrategyHub = () => {
+      // Safe configs derivation even if draftTemplate is null
+      const fixedConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'FIXED') : [];
+      const varConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'VARIABLE') : [];
 
-                              // Standard Monthly Fixed
-                              const pctPaid = Math.min(100, (cat.spent / cat.allocated) * 100);
-                              const isPaid = pctPaid >= 100;
-                              return (
-                                  <div 
-                                    key={cat.id} 
-                                    className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90 animate-slide-up"
-                                    style={{animationDelay: `${(idx + 5) * 100}ms`, opacity: 0}}
-                                  >
-                                      <div className="flex items-center gap-3">
-                                          <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-sm border border-slate-800 text-slate-500">{cat.icon}</div>
-                                          <div>
-                                              <h4 className="font-bold text-slate-300 text-sm">{cat.name}</h4>
-                                              <div className="flex items-center gap-2 mt-0.5">
-                                                  <div className="h-1.5 w-16 bg-slate-900 rounded-full overflow-hidden"><div className={`h-full transition-all duration-1000 ${isPaid ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{width: `${pctPaid}%`}}></div></div>
-                                                  <span className="text-[10px] text-slate-500">{isPaid ? 'Paid' : 'Pending'}</span>
-                                              </div>
-                                          </div>
-                                      </div>
-                                      <div className="text-right"><p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p><p className="text-[9px] text-slate-600 font-bold uppercase">/ Month</p></div>
-                                  </div>
-                              );
-                          })}
-                      </div>
+      // DYNAMIC TIMELINE GENERATION
+      // 1. Determine Range
+      const now = new Date();
+      let startYear = now.getFullYear();
+      let startMonth = now.getMonth();
+      
+      if (transactions.length > 0) {
+          // Find earliest transaction
+          const earliest = transactions.reduce((min, t) => t.date < min ? t.date : min, transactions[0].date);
+          const eDate = new Date(earliest);
+          startYear = eDate.getFullYear();
+          startMonth = eDate.getMonth();
+      } else {
+          // Default to beginning of current year if no transactions
+          startYear = now.getFullYear();
+          startMonth = 0;
+      }
 
-                      {/* VARIABLE SINGLE PAYMENTS (Monthly Once) */}
-                      <div className="space-y-4">
-                          <h3 className="text-slate-500 font-bold text-xs uppercase tracking-widest px-2 flex items-center gap-2"><Receipt size={14} className="text-emerald-400"/> Single Payments</h3>
-                          {dashboardStats.categoriesDetails
-                              .filter(c => c.type === 'VARIABLE' && c.period === 'MONTHLY_ONCE')
-                              .map((cat, idx) => {
-                                  const pctPaid = Math.min(100, (cat.spent / cat.allocated) * 100);
-                                  const isPaid = pctPaid >= 100;
-                                  return (
-                                      <div 
-                                          key={cat.id} 
-                                          className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 flex justify-between items-center opacity-90 animate-slide-up"
-                                          style={{animationDelay: `${(idx + 3) * 100}ms`, opacity: 0}}
-                                      >
-                                          <div className="flex items-center gap-3">
-                                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border ${isPaid ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-slate-900 text-slate-500 border-slate-800'}`}>
-                                                  {isPaid ? <CheckCircle2 size={16}/> : cat.icon}
-                                              </div>
-                                              <div>
-                                                  <h4 className="font-bold text-slate-300 text-sm">{cat.name}</h4>
-                                                  <div className="flex items-center gap-2 mt-0.5">
-                                                      <div className="h-1.5 w-16 bg-slate-900 rounded-full overflow-hidden">
-                                                          <div className={`h-full transition-all duration-1000 ${isPaid ? 'bg-emerald-500' : 'bg-blue-400'}`} style={{width: `${pctPaid}%`}}></div>
-                                                      </div>
-                                                      <span className={`text-[10px] ${isPaid ? 'text-emerald-500 font-bold' : 'text-slate-500'}`}>{isPaid ? 'Paid' : 'Pending'}</span>
-                                                  </div>
-                                              </div>
-                                          </div>
-                                          <div className="text-right"><p className="text-sm font-bold text-slate-400 font-mono">{formatMoney(cat.allocated)}</p></div>
-                                      </div>
-                                  );
-                          })}
-                          {dashboardStats.categoriesDetails.filter(c => c.type === 'VARIABLE' && c.period === 'MONTHLY_ONCE').length === 0 && (
-                              <div className="p-4 rounded-2xl border border-dashed border-slate-800 text-center text-xs text-slate-600">No one-time monthly payments configured.</div>
-                          )}
-                      </div>
+      // 2. Generate Months from Start -> +12 Months Future
+      const endYear = now.getFullYear() + 1;
+      const endMonth = now.getMonth();
+      
+      const timelineData: { year: number, months: any[] }[] = [];
+      let currentIterDate = new Date(startYear, startMonth, 1);
+      const stopDate = new Date(endYear, endMonth + 1, 0); // 1 year from now
 
-                  </div>
-              </div>
-            </>
-          )}
+      while (currentIterDate <= stopDate) {
+          const y = currentIterDate.getFullYear();
+          const m = currentIterDate.getMonth();
+          const monthKey = `${y}-${String(m+1).padStart(2,'0')}`;
+          
+          let yearGroup = timelineData.find(g => g.year === y);
+          if (!yearGroup) {
+              yearGroup = { year: y, months: [] };
+              timelineData.push(yearGroup);
+          }
 
-          {viewMode === 'HISTORY' && historicalStats && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-                
-                {/* 1. FILTERS & NAV */}
-                <div className="bg-[#0f172a] p-3 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
-                        {(['MONTH', 'YEAR', 'ALL'] as const).map(t => (
-                            <button 
-                                key={t} 
-                                onClick={() => setHistoryType(t)}
-                                className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${historyType === t ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-                            >
-                                {t} View
-                            </button>
-                        ))}
-                    </div>
+          const override = plan?.monthlyOverrides?.[monthKey];
+          const isLinked = selectedTemplateId ? override?.linkedTemplateId === selectedTemplateId : false;
+          const isCurrent = y === now.getFullYear() && m === now.getMonth();
+          const isPast = currentIterDate < new Date(now.getFullYear(), now.getMonth(), 1);
 
-                    {historyType !== 'ALL' && (
-                        <div className="flex items-center gap-4">
-                            <button onClick={() => navigateHistory(-1)} className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><ChevronLeft size={16}/></button>
-                            <div className="text-center min-w-[120px]">
-                                <span className="block text-sm font-bold text-white">
-                                    {historyType === 'MONTH' 
-                                        ? historyDate.toLocaleDateString('en-US', {month: 'long', year: 'numeric'}) 
-                                        : historyDate.getFullYear()
-                                    }
-                                </span>
-                                {historyType === 'MONTH' && (
-                                    <span className={`text-[9px] font-black uppercase tracking-widest block mt-0.5 ${historicalStats.hasOverride ? 'text-indigo-400' : 'text-slate-600'}`}>
-                                        {historicalStats.hasOverride ? (historicalStats.currentOverrideLabel ? historicalStats.currentOverrideLabel : 'Custom Budget') : 'Global Baseline'}
-                                    </span>
-                                )}
-                            </div>
-                            <button onClick={() => navigateHistory(1)} className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><ChevronRight size={16}/></button>
+          yearGroup.months.push({
+              date: new Date(currentIterDate),
+              key: monthKey,
+              isLinked,
+              isCurrent,
+              isPast,
+              planName: override?.label || (plan?.activeTemplateId ? (plan.budgetTemplates?.find(t=>t.id===plan.activeTemplateId)?.name) : 'Default')
+          });
+
+          currentIterDate.setMonth(currentIterDate.getMonth() + 1);
+      }
+      
+      // Sort Descending (Newest years first)
+      timelineData.sort((a,b) => b.year - a.year);
+
+      const isActiveGlobal = plan?.activeTemplateId === selectedTemplateId;
+
+      return (
+          // Adjusted layout to be responsive. Full height only on Desktop (lg).
+          <div className="flex flex-col lg:flex-row gap-6 animate-in slide-in-from-right duration-500 lg:h-[calc(100vh-140px)]">
+               
+               {/* COL 1: LIBRARY */}
+               <div className="w-full lg:w-64 flex flex-col gap-4 flex-shrink-0 lg:h-full">
+                    <div className="bg-[#0f172a] rounded-2xl border border-slate-800 p-4 flex flex-col lg:h-full shadow-xl max-h-60 lg:max-h-none">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Plan Library</h3>
+                            <button onClick={handleCreateTemplate} className="p-1.5 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all"><Plus size={14}/></button>
                         </div>
+                        <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1">
+                            {(!plan?.budgetTemplates || plan.budgetTemplates.length === 0) && (
+                                <div className="text-center p-4 border border-dashed border-slate-800 rounded-xl text-slate-500 text-xs">
+                                    No plans found. Create one to get started.
+                                </div>
+                            )}
+                            {plan?.budgetTemplates?.map(t => (
+                                <button 
+                                    key={t.id}
+                                    onClick={() => setSelectedTemplateId(t.id)}
+                                    className={`w-full text-left p-3 rounded-xl border transition-all relative group ${selectedTemplateId === t.id ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-600'}`}
+                                >
+                                    <span className="font-bold text-sm block truncate">{t.name}</span>
+                                    {plan?.activeTemplateId === t.id && <span className="absolute top-3 right-3 w-2 h-2 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>}
+                                </button>
+                            ))}
+                        </div>
+                        {selectedTemplateId && (
+                            <div className="pt-4 border-t border-slate-800 mt-2 space-y-2">
+                                <button onClick={handleDeleteTemplate} className="w-full py-2 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all">
+                                    Delete Plan
+                                </button>
+                            </div>
+                        )}
+                    </div>
+               </div>
+
+               {/* COL 2: EDITOR */}
+               <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a] rounded-2xl border border-slate-800 shadow-xl overflow-hidden min-h-[600px] lg:min-h-0 lg:h-full">
+                    {(!selectedTemplateId || !draftTemplate) ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center">
+                            <div className="bg-slate-900 p-6 rounded-full mb-6 animate-pulse">
+                                <BookTemplate size={48} className="text-slate-700" />
+                            </div>
+                            <h3 className="text-xl font-bold text-white mb-2">No Plan Selected</h3>
+                            <p className="text-sm text-slate-400 max-w-xs mb-8">Select a plan from the library on the left, or create a new strategy to begin.</p>
+                            <button 
+                                onClick={handleCreateTemplate}
+                                className="px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
+                            >
+                                <Plus size={18} /> Create New Strategy
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    <input 
+                                        type="text" 
+                                        value={draftName}
+                                        onChange={e => setDraftName(e.target.value)}
+                                        className="bg-transparent text-lg font-bold text-white outline-none border-b border-transparent focus:border-slate-600 transition-all placeholder:text-slate-600 min-w-0"
+                                        placeholder="Plan Name"
+                                    />
+                                    {isActiveGlobal ? (
+                                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
+                                            <Globe size={10} /> Active
+                                        </span>
+                                    ) : (
+                                        <button 
+                                            onClick={handleSetGlobal}
+                                            className="px-2 py-1 bg-slate-800 text-slate-400 hover:text-white hover:bg-emerald-600 hover:shadow-lg transition-all rounded-lg text-[10px] font-bold uppercase flex items-center gap-1 group"
+                                            title="Make this the default strategy for all months"
+                                        >
+                                            <Power size={10} className="group-hover:text-white" /> Make Active
+                                        </button>
+                                    )}
+                                </div>
+                                <button 
+                                    onClick={handleSaveDraft} 
+                                    className={`px-4 py-2 font-bold rounded-xl flex items-center gap-2 transition-all shadow-lg ${saveSuccess ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-indigo-900/20'}`}
+                                >
+                                    {saveSuccess ? <Check size={16} /> : <Save size={16} />} 
+                                    {saveSuccess ? 'Saved' : 'Save Changes'}
+                                </button>
+                            </div>
+
+                            <div className="p-6 border-b border-slate-800 grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Monthly Income</label>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.salary || ''} onChange={e => setDraftTemplate({...draftTemplate, salary: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-white font-mono text-sm outline-none focus:border-blue-500/50" /></div>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Savings Target</label>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.savingsGoal || ''} onChange={e => setDraftTemplate({...draftTemplate, savingsGoal: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-emerald-400 font-mono text-sm outline-none focus:border-emerald-500/50" /></div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                <div className="space-y-6">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Lock size={12}/> Fixed Costs</h4>
+                                        <div className="space-y-2">{fixedConfigs.map(renderConfigRow)}</div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Variable Budgets</h4>
+                                        <div className="space-y-2">{varConfigs.map(renderConfigRow)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
                     )}
+               </div>
 
-                    {historyType === 'MONTH' && (
-                        <button 
-                            onClick={handleEditMonthBudget}
-                            className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-sm"
-                        >
-                            <Settings2 size={14} className={historicalStats.hasOverride ? 'text-indigo-400' : 'text-slate-500'} />
-                            <span>Customize</span>
-                        </button>
-                    )}
-                </div>
-
-                {/* 2. SUMMARY CARD */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="p-6 bg-[#0f172a] border border-slate-800 rounded-2xl">
-                        <p className="text-xs text-slate-500 uppercase font-bold mb-1">Total Spent</p>
-                        <h3 className="text-2xl font-black text-rose-500">{formatMoney(historicalStats.totalSpent)}</h3>
-                    </div>
-                    <div className="p-6 bg-[#0f172a] border border-slate-800 rounded-2xl">
-                        <p className="text-xs text-slate-500 uppercase font-bold mb-1">Budget Target</p>
-                        <h3 className="text-2xl font-black text-blue-400">{formatMoney(historicalStats.totalBudget)}</h3>
-                    </div>
-                    <div className={`p-6 border rounded-2xl ${historicalStats.totalVariance >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
-                        <p className={`text-xs uppercase font-bold mb-1 ${historicalStats.totalVariance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>Net Variance</p>
-                        <h3 className={`text-2xl font-black ${historicalStats.totalVariance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {historicalStats.totalVariance >= 0 ? '+' : ''}{formatMoney(historicalStats.totalVariance)}
-                        </h3>
-                    </div>
-                </div>
-
-                {/* 3. DETAILED LIST */}
-                <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+               {/* COL 3: DEPLOYMENT (Dynamic Timeline) */}
+               <div className="w-full lg:w-80 flex-shrink-0 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col shadow-xl overflow-hidden h-[500px] lg:h-full">
                     <div className="p-4 border-b border-slate-800 bg-slate-900/50">
-                        <h3 className="font-bold text-white text-sm">Category Performance</h3>
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+                            <CalendarRange size={14} className="text-indigo-400"/> Timeline Assignment
+                        </h3>
+                        <p className="text-[10px] text-slate-500">
+                            Apply this plan to past or future months.
+                        </p>
                     </div>
-                    <div className="p-4 space-y-3">
-                        {historicalStats.categoriesData.map((cat, idx) => (
-                            <div key={idx} className="flex items-center justify-between p-3 rounded-xl border border-slate-800 bg-slate-900/30">
-                                <div className="flex items-center gap-3 w-1/3">
-                                    <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center border border-slate-800 text-sm">{cat.icon}</div>
-                                    <div className="min-w-0">
-                                        <p className="text-xs font-bold text-slate-200 truncate">{cat.name}</p>
-                                        <p className="text-[10px] text-slate-500">{cat.type}</p>
-                                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+                        {timelineData.map(group => (
+                            <div key={group.year}>
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-xs font-black text-slate-400 bg-slate-900 px-2 py-1 rounded border border-slate-800">{group.year}</span>
+                                    <div className="h-[1px] flex-1 bg-slate-800"></div>
                                 </div>
-                                <div className="flex-1 px-4">
-                                    <div className="flex justify-between text-[10px] mb-1">
-                                        <span className="text-slate-500">{formatMoney(cat.spent)} spent</span>
-                                        <span className={cat.status === 'OVER' ? 'text-rose-500 font-bold' : 'text-emerald-500 font-bold'}>{cat.pct.toFixed(0)}%</span>
-                                    </div>
-                                    <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                        <div 
-                                            className={`h-full rounded-full ${cat.status === 'OVER' ? 'bg-rose-500' : 'bg-emerald-500'}`} 
-                                            style={{width: `${cat.pct}%`}}
-                                        ></div>
-                                    </div>
-                                </div>
-                                <div className="text-right w-24">
-                                    <p className="text-xs font-bold text-slate-400">{formatMoney(cat.target)}</p>
-                                    <p className="text-[9px] text-slate-600 uppercase">Target</p>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {group.months.map((m: any) => (
+                                        <button 
+                                            key={m.key}
+                                            onClick={() => handleToggleMonthAssign(m.key)}
+                                            disabled={!selectedTemplateId}
+                                            className={`
+                                                relative p-2 rounded-xl border text-left transition-all overflow-hidden flex flex-col justify-between h-20 group
+                                                ${!selectedTemplateId 
+                                                    ? 'opacity-30 cursor-not-allowed bg-slate-900 border-slate-800' 
+                                                    : m.isLinked 
+                                                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' 
+                                                        : m.isCurrent 
+                                                            ? 'bg-slate-800 border-emerald-500/50 text-slate-300 ring-1 ring-emerald-500/30' 
+                                                            : 'bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-600'
+                                                }
+                                            `}
+                                        >
+                                            <div className="flex justify-between items-start w-full">
+                                                <span className={`text-[10px] font-bold uppercase ${m.isCurrent ? 'text-emerald-400' : ''}`}>
+                                                    {m.date.toLocaleDateString('en-US', {month:'short'})}
+                                                </span>
+                                                {m.isLinked && <Check size={10} className="text-indigo-300" />}
+                                            </div>
+                                            
+                                            <span className="text-[9px] font-medium truncate w-full opacity-70">
+                                                {m.isLinked ? draftName : m.planName}
+                                            </span>
+
+                                            {/* Status Indicators */}
+                                            {m.isCurrent && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>}
+                                            {!m.isCurrent && m.isLinked && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-400"></div>}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         ))}
+                        
+                        {timelineData.length === 0 && (
+                            <div className="text-center p-8 text-slate-600 italic text-xs">
+                                No history found.
+                            </div>
+                        )}
+                    </div>
+               </div>
+          </div>
+      );
+  };
+
+  return (
+    <div className="space-y-6 pb-20">
+        {/* TOP NAV */}
+        <div className="flex gap-4">
+            <button 
+                onClick={() => setActiveTab('DASHBOARD')}
+                className={`flex-1 py-4 rounded-2xl border flex items-center justify-center gap-3 transition-all ${activeTab === 'DASHBOARD' ? 'bg-[#0f172a] border-slate-700 text-white shadow-xl' : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'}`}
+            >
+                <LayoutDashboard size={20} className={activeTab === 'DASHBOARD' ? 'text-emerald-500' : ''} />
+                <span className="font-bold tracking-wide">Dashboard & Analysis</span>
+            </button>
+            <button 
+                onClick={() => setActiveTab('STRATEGY')}
+                className={`flex-1 py-4 rounded-2xl border flex items-center justify-center gap-3 transition-all ${activeTab === 'STRATEGY' ? 'bg-[#0f172a] border-slate-700 text-white shadow-xl' : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'}`}
+            >
+                <PenTool size={20} className={activeTab === 'STRATEGY' ? 'text-indigo-500' : ''} />
+                <span className="font-bold tracking-wide">Strategy Hub & Editor</span>
+            </button>
+        </div>
+
+        {activeTab === 'DASHBOARD' ? renderDashboard() : renderStrategyHub()}
+
+        {/* CREATE PLAN MODAL */}
+        {isCreateModalOpen && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsCreateModalOpen(false)} />
+                <div className="relative bg-[#0f172a] border border-slate-800 rounded-3xl shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95 duration-300">
+                    <div className="flex justify-between items-center mb-8">
+                        <h2 className="text-xl font-bold text-white uppercase tracking-tight">Design New Strategy</h2>
+                        <button onClick={() => setIsCreateModalOpen(false)} className="p-2 bg-slate-800 rounded-full text-slate-500 hover:text-white transition-all"><X size={16}/></button>
+                    </div>
+                    
+                    <div className="space-y-6">
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Strategy Name</label>
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all shadow-inner"
+                                placeholder="e.g. Aggressive Savings"
+                                value={newPlanData.name}
+                                onChange={e => setNewPlanData({...newPlanData, name: e.target.value})}
+                                autoFocus
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Monthly Income</label>
+                                <div className="relative">
+                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">{settings.currencySymbol}</span>
+                                    <input 
+                                        type="number" 
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 pl-10 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                                        placeholder="0"
+                                        value={newPlanData.salary || ''}
+                                        onChange={e => setNewPlanData({...newPlanData, salary: parseFloat(e.target.value) || 0})}
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Savings Goal</label>
+                                <div className="relative">
+                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">{settings.currencySymbol}</span>
+                                    <input 
+                                        type="number" 
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 pl-10 text-emerald-400 outline-none focus:border-emerald-500/50 shadow-inner"
+                                        placeholder="0"
+                                        value={newPlanData.savingsGoal || ''}
+                                        onChange={e => setNewPlanData({...newPlanData, savingsGoal: parseFloat(e.target.value) || 0})}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* GLOBAL SELECTION */}
+                        <div className="flex items-center gap-3 p-4 bg-slate-900/50 rounded-2xl border border-slate-800 cursor-pointer hover:bg-slate-900 transition-colors" onClick={() => setCreateAsGlobal(!createAsGlobal)}>
+                            <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${createAsGlobal ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600 bg-slate-950'}`}>
+                                {createAsGlobal && <Check size={14} className="text-white" />}
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold text-white">Set as Active Strategy</p>
+                                <p className="text-[10px] text-slate-500">This will immediately apply to all months not manually overridden.</p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4 mt-8 pt-4 border-t border-slate-800">
+                            <button 
+                                onClick={() => setIsCreateModalOpen(false)}
+                                className="flex-1 px-4 py-4 text-slate-500 font-bold uppercase text-xs tracking-widest hover:text-white transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                onClick={handleConfirmCreate}
+                                className="flex-1 px-4 py-4 bg-emerald-600 text-slate-950 font-black uppercase text-xs tracking-widest rounded-2xl hover:bg-emerald-500 shadow-xl shadow-emerald-900/20 transition-all active:scale-95"
+                            >
+                                Create Plan
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
-          )}
-      </div>
+        )}
+    </div>
   );
 };
