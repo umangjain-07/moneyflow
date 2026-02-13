@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -16,6 +16,7 @@ export const Planning: React.FC = () => {
   // View State
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'STRATEGY'>('DASHBOARD');
   const [historyDate, setHistoryDate] = useState(new Date());
+  const [dashboardView, setDashboardView] = useState<'MONTH' | 'YEAR'>('MONTH');
 
   // --- STRATEGY EDITOR STATE ---
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -116,6 +117,41 @@ export const Planning: React.FC = () => {
       }
   }, [selectedTemplateId, plan, categories.length]); // Re-run if categories change
 
+  const calculateProjection = (template: BudgetTemplate | null) => {
+      if (!template) return { income: 0, fixed: 0, variable: 0, oneTime: 0, savings: 0, balance: 0 };
+      
+      const income = template.salary;
+      const savings = template.savingsGoal;
+      
+      let fixed = 0, variable = 0, oneTime = 0;
+      
+      template.configs.forEach(c => {
+          // Normalize to monthly for projection
+          const monthlyAmount = c.period === 'DAILY' ? c.allocatedAmount * 30 :
+                                c.period === 'YEARLY' ? c.allocatedAmount / 12 :
+                                c.allocatedAmount;
+
+          if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY') {
+              oneTime += monthlyAmount;
+          } else if (c.type === 'FIXED') {
+              fixed += monthlyAmount;
+          } else {
+              variable += monthlyAmount;
+          }
+      });
+      
+      return {
+          income,
+          fixed,
+          variable,
+          oneTime,
+          savings,
+          balance: income - savings - fixed - variable - oneTime
+      };
+  };
+
+  const projection = useMemo(() => calculateProjection(draftTemplate), [draftTemplate]);
+
   // --- LOGIC HELPERS ---
 
   const getActiveConfigs = (targetDate: Date) => {
@@ -176,14 +212,11 @@ export const Planning: React.FC = () => {
       }
       
       const newId = Date.now().toString();
-      
-      // Ensure we have a plan object to work with
       const currentPlan = plan || db.getPlan() || {
         salary: 0, savingsGoal: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString(),
         categoryConfigs: [], monthlyOverrides: {}, budgetTemplates: []
       };
 
-      // Ensure categories are loaded
       const currentCats = categories.length > 0 ? categories : db.getCategories();
       const validCats = currentCats.filter(c => c.type !== 'INCOME');
 
@@ -205,11 +238,9 @@ export const Planning: React.FC = () => {
       const updatedPlan = {
           ...currentPlan,
           budgetTemplates: [...(currentPlan.budgetTemplates || []), newTemplate],
-          // Apply global selection if requested
           activeTemplateId: createAsGlobal ? newId : currentPlan.activeTemplateId
       };
       
-      // CRITICAL: Save, Set Plan, AND Select the new template immediately
       db.savePlan(updatedPlan);
       setPlan(updatedPlan);
       setSelectedTemplateId(newId);
@@ -236,12 +267,10 @@ export const Planning: React.FC = () => {
       if (!confirm("Delete this plan? Months linked to it will revert to the Global Default.")) return;
 
       const updatedTemplates = plan.budgetTemplates?.filter(t => t.id !== selectedTemplateId) || [];
-      
-      // Cleanup links in overrides
       const newOverrides = { ...plan.monthlyOverrides };
       Object.keys(newOverrides).forEach(k => {
           if (newOverrides[k].linkedTemplateId === selectedTemplateId) {
-              delete newOverrides[k]; // Revert to global
+              delete newOverrides[k]; 
           }
       });
 
@@ -291,7 +320,6 @@ export const Planning: React.FC = () => {
           delete newOverrides[monthKey];
       } else {
           // Toggle ON: Link to Current Draft Template
-          // We do NOT copy configs. We store the ID. This enables the "Immediate Reflection".
           newOverrides[monthKey] = {
               configs: [], // Empty because we rely on the link
               label: draftName,
@@ -329,7 +357,6 @@ export const Planning: React.FC = () => {
                   <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
               </div>
               
-              {/* Type Toggle */}
               <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
                   {(['FIXED', 'VARIABLE'] as const).map(t => (
                       <button 
@@ -342,11 +369,10 @@ export const Planning: React.FC = () => {
                   ))}
               </div>
 
-              {/* Amount Input */}
               <div className="flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2">
                   <input 
                     type="number" 
-                    value={displayValue === 0 ? '' : displayValue}
+                    value={displayValue} 
                     onChange={(e) => {
                         const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
                         const final = conf.period === 'DAILY' ? val * DAYS_IN_MONTH : 
@@ -358,7 +384,6 @@ export const Planning: React.FC = () => {
                   />
               </div>
 
-              {/* Period Toggle */}
               <button onClick={() => handlePeriodToggle(conf.categoryId)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">
                   <Repeat size={14} />
               </button>
@@ -366,60 +391,124 @@ export const Planning: React.FC = () => {
       );
   };
 
+  const renderDashboardConfigSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[], multiplier: number) => {
+      if (configs.length === 0) return null;
+
+      return (
+          <div className="space-y-3">
+                 {configs.map(conf => {
+                    const cat = categories.find(c => c.id === conf.categoryId);
+                    const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
+                    
+                    const target = conf.allocatedAmount * multiplier;
+                    const pct = target > 0 ? Math.min(100, (spent / target) * 100) : (spent > 0 ? 100 : 0);
+                    const isOver = spent > target;
+
+                    return (
+                        <div key={conf.categoryId} className="flex items-center gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/20 hover:bg-slate-900/40 transition-colors">
+                            <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center text-lg shadow-sm border border-slate-800">{cat?.icon}</div>
+                            <div className="flex-1">
+                                <div className="flex justify-between mb-1">
+                                    <span className="text-sm font-bold text-slate-200">{cat?.name}</span>
+                                    <span className={`text-xs font-mono font-bold ${isOver ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                        {formatMoney(spent)} <span className="text-slate-600">/ {formatMoney(target)}</span>
+                                    </span>
+                                </div>
+                                <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${isOver ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${pct}%`}}></div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                 })}
+          </div>
+      );
+  };
+
   const renderDashboard = () => {
       if (!plan) return <div className="p-10 text-center text-slate-500">Initializing...</div>;
 
-      const now = new Date();
-      const currentMonthKey = `${historyDate.getFullYear()}-${String(historyDate.getMonth() + 1).padStart(2, '0')}`;
       const activeConfigs = getActiveConfigs(historyDate);
       const planMeta = getActivePlanMeta(historyDate);
 
-      // Financial Calc
-      const totalIncome = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.salary || plan.salary;
-      const totalSavings = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.savingsGoal || plan.savingsGoal;
-      const totalFixed = activeConfigs.filter(c => c.type === 'FIXED').reduce((s, c) => s + c.allocatedAmount, 0);
-      const totalVariable = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0);
-      const unallocated = totalIncome - totalSavings - totalFixed - totalVariable;
+      let startOfPeriod = '', endOfPeriod = '';
+      const budgetMultiplier = dashboardView === 'YEAR' ? 12 : 1;
 
-      // Expense Tracking
-      const startOfMonth = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1).toISOString().split('T')[0];
-      const endOfMonth = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0).toISOString().split('T')[0];
+      if (dashboardView === 'MONTH') {
+          startOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1).toISOString().split('T')[0];
+          endOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0).toISOString().split('T')[0];
+      } else {
+          startOfPeriod = new Date(historyDate.getFullYear(), 0, 1).toISOString().split('T')[0];
+          endOfPeriod = new Date(historyDate.getFullYear(), 11, 31).toISOString().split('T')[0];
+      }
+
+      const monthlyIncome = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.salary || plan.salary;
+      const monthlySavings = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.savingsGoal || plan.savingsGoal;
       
-      const relevantTxs = transactions.filter(t => t.date >= startOfMonth && t.date <= endOfMonth && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
+      const totalIncome = monthlyIncome * budgetMultiplier;
+      const totalSavings = monthlySavings * budgetMultiplier;
+      
+      const totalFixedBudget = activeConfigs.filter(c => c.type === 'FIXED').reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      const totalVariableBudget = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      
+      const unallocated = totalIncome - totalSavings - totalFixedBudget - totalVariableBudget;
+
+      const relevantTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
       const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
-      
-      const pctUsed = totalIncome > 0 ? (totalSpent / totalIncome) * 100 : 0;
+
+      const fixedGroup = activeConfigs.filter(c => c.type === 'FIXED' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
+      const variableGroup = activeConfigs.filter(c => c.type === 'VARIABLE' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
+      const oneTimeGroup = activeConfigs.filter(c => c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY');
 
       return (
           <div className="space-y-6 animate-in fade-in">
-               {/* Header Controls */}
-               <div className="flex justify-between items-center bg-[#0f172a] p-4 rounded-2xl border border-slate-800">
-                    <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() - 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronLeft size={20}/></button>
-                    <div className="text-center">
-                        <h2 className="text-xl font-bold text-white">{historyDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2>
-                        <div className="flex items-center justify-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
-                                planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
-                                planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
-                                'bg-slate-800 text-slate-400 border-slate-700'
-                            }`}>
-                                {planMeta.label}
-                            </span>
-                            {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
+               <div className="flex flex-col md:flex-row justify-between items-center bg-[#0f172a] p-4 rounded-2xl border border-slate-800 gap-4">
+                    <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-start">
+                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() - 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronLeft size={20}/></button>
+                        <div className="text-center">
+                            <h2 className="text-xl font-bold text-white">
+                                {dashboardView === 'MONTH' 
+                                    ? historyDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) 
+                                    : historyDate.getFullYear()}
+                            </h2>
+                            <div className="flex items-center justify-center gap-2 mt-1">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
+                                    planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                    planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                    'bg-slate-800 text-slate-400 border-slate-700'
+                                }`}>
+                                    {planMeta.label}
+                                </span>
+                                {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
+                            </div>
                         </div>
+                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() + 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronRight size={20}/></button>
                     </div>
-                    <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() + 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronRight size={20}/></button>
+
+                    <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                        <button 
+                            onClick={() => setDashboardView('MONTH')}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${dashboardView === 'MONTH' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            Monthly
+                        </button>
+                        <button 
+                            onClick={() => setDashboardView('YEAR')}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${dashboardView === 'YEAR' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            Yearly
+                        </button>
+                    </div>
                </div>
 
-               {/* Summary Cards */}
                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Budgeted Output</p>
-                        <h3 className="text-3xl font-black text-white">{formatMoney(totalFixed + totalVariable)}</h3>
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">{dashboardView === 'YEAR' ? 'Annual' : 'Monthly'} Budget</p>
+                        <h3 className="text-3xl font-black text-white">{formatMoney(totalFixedBudget + totalVariableBudget)}</h3>
                     </div>
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Actual Spent</p>
-                        <h3 className={`text-3xl font-black ${totalSpent > (totalFixed + totalVariable) ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
+                        <h3 className={`text-3xl font-black ${totalSpent > (totalFixedBudget + totalVariableBudget) ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
                     </div>
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Unallocated Buffer</p>
@@ -427,36 +516,48 @@ export const Planning: React.FC = () => {
                     </div>
                </div>
 
-               {/* Budget Breakdown */}
-               <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
-                    <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
-                        <h3 className="font-bold text-white text-sm">Category Performance</h3>
-                        <div className="text-xs text-slate-500">{activeConfigs.length} Active Rules</div>
+               {/* RESTRUCTURED 2-COLUMN LAYOUT */}
+               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    {/* LEFT COL: VARIABLE */}
+                    <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden h-full">
+                         <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                            <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                                 <div className="w-2 h-2 rounded-full bg-blue-500"></div> Variable / Lifestyle
+                            </h3>
+                         </div>
+                         <div className="p-6">
+                            {renderDashboardConfigSection(variableGroup, relevantTxs, budgetMultiplier)}
+                            {variableGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No variable rules set.</div>}
+                         </div>
                     </div>
-                    <div className="p-4 space-y-3">
-                        {activeConfigs.map(conf => {
-                            const cat = categories.find(c => c.id === conf.categoryId);
-                            const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
-                            const pct = Math.min(100, (spent / conf.allocatedAmount) * 100);
-                            const isOver = spent > conf.allocatedAmount;
 
-                            return (
-                                <div key={conf.categoryId} className="flex items-center gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/20">
-                                    <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center text-lg shadow-sm border border-slate-800">{cat?.icon}</div>
-                                    <div className="flex-1">
-                                        <div className="flex justify-between mb-1">
-                                            <span className="text-sm font-bold text-slate-200">{cat?.name}</span>
-                                            <span className={`text-xs font-mono font-bold ${isOver ? 'text-rose-500' : 'text-emerald-500'}`}>
-                                                {formatMoney(spent)} <span className="text-slate-600">/ {formatMoney(conf.allocatedAmount)}</span>
-                                            </span>
-                                        </div>
-                                        <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                            <div className={`h-full rounded-full ${isOver ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${pct}%`}}></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
+                    {/* RIGHT COL: FIXED & ONE-TIME */}
+                    <div className="space-y-6">
+                        {/* FIXED */}
+                        <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                            <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-rose-500"></div> Fixed Obligations
+                                </h3>
+                            </div>
+                            <div className="p-6">
+                                {renderDashboardConfigSection(fixedGroup, relevantTxs, budgetMultiplier)}
+                                {fixedGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No fixed rules set.</div>}
+                            </div>
+                        </div>
+
+                        {/* ONE TIME */}
+                        <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                             <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div> One-Time / Annual
+                                </h3>
+                            </div>
+                            <div className="p-6">
+                                {renderDashboardConfigSection(oneTimeGroup, relevantTxs, budgetMultiplier)}
+                                {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No irregular rules set.</div>}
+                            </div>
+                        </div>
                     </div>
                </div>
           </div>
@@ -464,35 +565,30 @@ export const Planning: React.FC = () => {
   };
 
   const renderStrategyHub = () => {
-      // Safe configs derivation even if draftTemplate is null
       const fixedConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'FIXED') : [];
       const varConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'VARIABLE') : [];
 
       // DYNAMIC TIMELINE GENERATION
-      // 1. Determine Range
       const now = new Date();
       let startYear = now.getFullYear();
       let startMonth = now.getMonth();
       
       if (transactions.length > 0) {
-          // Find earliest transaction
           const earliest = transactions.reduce((min, t) => t.date < min ? t.date : min, transactions[0].date);
           const eDate = new Date(earliest);
           startYear = eDate.getFullYear();
           startMonth = eDate.getMonth();
       } else {
-          // Default to beginning of current year if no transactions
           startYear = now.getFullYear();
           startMonth = 0;
       }
 
-      // 2. Generate Months from Start -> +12 Months Future
       const endYear = now.getFullYear() + 1;
       const endMonth = now.getMonth();
       
       const timelineData: { year: number, months: any[] }[] = [];
       let currentIterDate = new Date(startYear, startMonth, 1);
-      const stopDate = new Date(endYear, endMonth + 1, 0); // 1 year from now
+      const stopDate = new Date(endYear, endMonth + 1, 0); 
 
       while (currentIterDate <= stopDate) {
           const y = currentIterDate.getFullYear();
@@ -522,13 +618,11 @@ export const Planning: React.FC = () => {
           currentIterDate.setMonth(currentIterDate.getMonth() + 1);
       }
       
-      // Sort Descending (Newest years first)
       timelineData.sort((a,b) => b.year - a.year);
 
       const isActiveGlobal = plan?.activeTemplateId === selectedTemplateId;
 
       return (
-          // Adjusted layout to be responsive. Full height only on Desktop (lg).
           <div className="flex flex-col lg:flex-row gap-6 animate-in slide-in-from-right duration-500 lg:h-[calc(100vh-140px)]">
                
                {/* COL 1: LIBRARY */}
@@ -618,11 +712,11 @@ export const Planning: React.FC = () => {
                             <div className="p-6 border-b border-slate-800 grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Monthly Income</label>
-                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.salary || ''} onChange={e => setDraftTemplate({...draftTemplate, salary: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-white font-mono text-sm outline-none focus:border-blue-500/50" /></div>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.salary} onChange={e => setDraftTemplate({...draftTemplate, salary: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-white font-mono text-sm outline-none focus:border-blue-500/50" /></div>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Savings Target</label>
-                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.savingsGoal || ''} onChange={e => setDraftTemplate({...draftTemplate, savingsGoal: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-emerald-400 font-mono text-sm outline-none focus:border-emerald-500/50" /></div>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.savingsGoal} onChange={e => setDraftTemplate({...draftTemplate, savingsGoal: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-emerald-400 font-mono text-sm outline-none focus:border-emerald-500/50" /></div>
                                 </div>
                             </div>
 
@@ -643,66 +737,125 @@ export const Planning: React.FC = () => {
                </div>
 
                {/* COL 3: DEPLOYMENT (Dynamic Timeline) */}
-               <div className="w-full lg:w-80 flex-shrink-0 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col shadow-xl overflow-hidden h-[500px] lg:h-full">
-                    <div className="p-4 border-b border-slate-800 bg-slate-900/50">
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
-                            <CalendarRange size={14} className="text-indigo-400"/> Timeline Assignment
-                        </h3>
-                        <p className="text-[10px] text-slate-500">
-                            Apply this plan to past or future months.
-                        </p>
-                    </div>
-                    
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-                        {timelineData.map(group => (
-                            <div key={group.year}>
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-xs font-black text-slate-400 bg-slate-900 px-2 py-1 rounded border border-slate-800">{group.year}</span>
-                                    <div className="h-[1px] flex-1 bg-slate-800"></div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {group.months.map((m: any) => (
-                                        <button 
-                                            key={m.key}
-                                            onClick={() => handleToggleMonthAssign(m.key)}
-                                            disabled={!selectedTemplateId}
-                                            className={`
-                                                relative p-2 rounded-xl border text-left transition-all overflow-hidden flex flex-col justify-between h-20 group
-                                                ${!selectedTemplateId 
-                                                    ? 'opacity-30 cursor-not-allowed bg-slate-900 border-slate-800' 
-                                                    : m.isLinked 
-                                                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' 
-                                                        : m.isCurrent 
-                                                            ? 'bg-slate-800 border-emerald-500/50 text-slate-300 ring-1 ring-emerald-500/30' 
-                                                            : 'bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-600'
-                                                }
-                                            `}
-                                        >
-                                            <div className="flex justify-between items-start w-full">
-                                                <span className={`text-[10px] font-bold uppercase ${m.isCurrent ? 'text-emerald-400' : ''}`}>
-                                                    {m.date.toLocaleDateString('en-US', {month:'short'})}
-                                                </span>
-                                                {m.isLinked && <Check size={10} className="text-indigo-300" />}
-                                            </div>
-                                            
-                                            <span className="text-[9px] font-medium truncate w-full opacity-70">
-                                                {m.isLinked ? draftName : m.planName}
-                                            </span>
+               <div className="w-full lg:w-80 flex-shrink-0 flex flex-col gap-6 h-[calc(100vh-140px)]">
+                    {/* NEW: PROJECTION CARD */}
+                    <div className="bg-[#0f172a] rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex-shrink-0">
+                        <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                <Calculator size={14} className="text-emerald-400"/> Monthly Projection
+                            </h3>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            {/* Income */}
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-slate-400">Total Income</span>
+                                <span className="font-bold text-emerald-400">{formatMoney(projection.income)}</span>
+                            </div>
+                            
+                            <div className="h-px bg-slate-800 my-1"></div>
 
-                                            {/* Status Indicators */}
-                                            {m.isCurrent && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>}
-                                            {!m.isCurrent && m.isLinked && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-400"></div>}
-                                        </button>
-                                    ))}
+                            {/* Outflows */}
+                            <div className="space-y-1">
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500">Fixed Costs</span>
+                                    <span className="font-mono text-rose-400">{formatMoney(projection.fixed)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500">Variable Est.</span>
+                                    <span className="font-mono text-blue-400">{formatMoney(projection.variable)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500">One-Time (Avg)</span>
+                                    <span className="font-mono text-purple-400">{formatMoney(projection.oneTime)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs font-bold">
+                                    <span className="text-slate-400">Target Savings</span>
+                                    <span className="font-mono text-emerald-500">{formatMoney(projection.savings)}</span>
                                 </div>
                             </div>
-                        ))}
-                        
-                        {timelineData.length === 0 && (
-                            <div className="text-center p-8 text-slate-600 italic text-xs">
-                                No history found.
+
+                            <div className="h-px bg-slate-800 my-1"></div>
+
+                            {/* Net */}
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Net Balance</span>
+                                <span className={`text-lg font-black ${projection.balance >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                                    {formatMoney(projection.balance)}
+                                </span>
                             </div>
-                        )}
+                            
+                            {/* Status Bar */}
+                            <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden flex">
+                                <div className="bg-rose-500" style={{width: `${Math.min(100, (projection.fixed/Math.max(1, projection.income))*100)}%`}} title="Fixed"></div>
+                                <div className="bg-purple-500" style={{width: `${Math.min(100, (projection.oneTime/Math.max(1, projection.income))*100)}%`}} title="OneTime"></div>
+                                <div className="bg-blue-500" style={{width: `${Math.min(100, (projection.variable/Math.max(1, projection.income))*100)}%`}} title="Variable"></div>
+                                <div className="bg-emerald-500" style={{width: `${Math.min(100, (projection.savings/Math.max(1, projection.income))*100)}%`}} title="Savings"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col shadow-xl overflow-hidden min-h-0">
+                        <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+                                <CalendarRange size={14} className="text-indigo-400"/> Timeline Assignment
+                            </h3>
+                            <p className="text-[10px] text-slate-500">
+                                Apply this plan to past or future months.
+                            </p>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+                            {timelineData.map(group => (
+                                <div key={group.year}>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="text-xs font-black text-slate-400 bg-slate-900 px-2 py-1 rounded border border-slate-800">{group.year}</span>
+                                        <div className="h-[1px] flex-1 bg-slate-800"></div>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {group.months.map((m: any) => (
+                                            <button 
+                                                key={m.key}
+                                                onClick={() => handleToggleMonthAssign(m.key)}
+                                                disabled={!selectedTemplateId}
+                                                title={selectedTemplateId ? "Click to toggle this plan for this specific month" : "Select a plan from the left to assign"}
+                                                className={`
+                                                    relative p-2 rounded-xl border text-left transition-all overflow-hidden flex flex-col justify-between h-20 group
+                                                    ${!selectedTemplateId 
+                                                        ? 'opacity-30 cursor-not-allowed bg-slate-900 border-slate-800' 
+                                                        : m.isLinked 
+                                                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' 
+                                                            : m.isCurrent 
+                                                                ? 'bg-slate-800 border-emerald-500/50 text-slate-300 ring-1 ring-emerald-500/30' 
+                                                                : 'bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-600'
+                                                    }
+                                                `}
+                                            >
+                                                <div className="flex justify-between items-start w-full">
+                                                    <span className={`text-[10px] font-bold uppercase ${m.isCurrent ? 'text-emerald-400' : ''}`}>
+                                                        {m.date.toLocaleDateString('en-US', {month:'short'})}
+                                                    </span>
+                                                    {m.isLinked && <Check size={10} className="text-indigo-300" />}
+                                                </div>
+                                                
+                                                <span className="text-[9px] font-medium truncate w-full opacity-70">
+                                                    {m.isLinked ? draftName : m.planName}
+                                                </span>
+
+                                                {/* Status Indicators */}
+                                                {m.isCurrent && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>}
+                                                {!m.isCurrent && m.isLinked && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-400"></div>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                            
+                            {timelineData.length === 0 && (
+                                <div className="text-center p-8 text-slate-600 italic text-xs">
+                                    No history found.
+                                </div>
+                            )}
+                        </div>
                     </div>
                </div>
           </div>
