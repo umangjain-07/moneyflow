@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -16,7 +16,7 @@ export const Planning: React.FC = () => {
   // View State
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'STRATEGY'>('DASHBOARD');
   const [historyDate, setHistoryDate] = useState(new Date());
-  const [dashboardView, setDashboardView] = useState<'MONTH' | 'YEAR'>('MONTH');
+  const [dashboardView, setDashboardView] = useState<'MONTH' | 'YEAR' | 'ALL'>('MONTH');
 
   // --- STRATEGY EDITOR STATE ---
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -33,6 +33,7 @@ export const Planning: React.FC = () => {
   const DAYS_IN_MONTH = 30; 
   const MONTHS_IN_YEAR = 12;
 
+  // 1. Data Loading (Pure Data Fetching, No UI State Side Effects)
   const loadData = () => {
     setSettings(db.getSettings());
     const cats = db.getCategories();
@@ -66,12 +67,7 @@ export const Planning: React.FC = () => {
     const existingPlan = db.getPlan();
     if (existingPlan) {
         setPlan(existingPlan);
-        // Only auto-select if nothing is selected and we have templates
-        if (!selectedTemplateId && existingPlan.activeTemplateId) {
-            setSelectedTemplateId(existingPlan.activeTemplateId);
-        } else if (!selectedTemplateId && existingPlan.budgetTemplates && existingPlan.budgetTemplates.length > 0) {
-            setSelectedTemplateId(existingPlan.budgetTemplates[0].id);
-        }
+        // Note: Auto-selection logic moved to useEffect to prevent stale-closure resets
     } else {
         // Init minimal plan if none exists
         const initialPlan: FinancialPlan = {
@@ -88,6 +84,17 @@ export const Planning: React.FC = () => {
     const unsubscribe = subscribe(loadData);
     return () => unsubscribe();
   }, []);
+
+  // 2. Selection Logic (Runs only when plan changes and selection is empty)
+  useEffect(() => {
+      if (plan && !selectedTemplateId) {
+          if (plan.activeTemplateId) {
+              setSelectedTemplateId(plan.activeTemplateId);
+          } else if (plan.budgetTemplates && plan.budgetTemplates.length > 0) {
+              setSelectedTemplateId(plan.budgetTemplates[0].id);
+          }
+      }
+  }, [plan, selectedTemplateId]);
 
   // Sync Draft when Selection Changes
   useEffect(() => {
@@ -115,7 +122,7 @@ export const Planning: React.FC = () => {
           setDraftTemplate({ ...found, configs: mergedConfigs });
           setDraftName(found.name);
       }
-  }, [selectedTemplateId, plan, categories.length]); // Re-run if categories change
+  }, [selectedTemplateId, plan, categories.length]); 
 
   const calculateProjection = (template: BudgetTemplate | null) => {
       if (!template) return { income: 0, fixed: 0, variable: 0, oneTime: 0, savings: 0, balance: 0 };
@@ -126,17 +133,23 @@ export const Planning: React.FC = () => {
       let fixed = 0, variable = 0, oneTime = 0;
       
       template.configs.forEach(c => {
+          if (c.type === 'IGNORE') return;
+
           // Normalize to monthly for projection
           const monthlyAmount = c.period === 'DAILY' ? c.allocatedAmount * 30 :
                                 c.period === 'YEARLY' ? c.allocatedAmount / 12 :
                                 c.allocatedAmount;
 
-          if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY') {
-              oneTime += monthlyAmount;
-          } else if (c.type === 'FIXED') {
+          if (c.type === 'FIXED') {
+              // ALL Fixed items go here, regardless of frequency
               fixed += monthlyAmount;
-          } else {
-              variable += monthlyAmount;
+          } else if (c.type === 'VARIABLE') {
+              // Variable items split based on frequency
+              if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY') {
+                  oneTime += monthlyAmount;
+              } else {
+                  variable += monthlyAmount;
+              }
           }
       });
       
@@ -160,7 +173,7 @@ export const Planning: React.FC = () => {
       
       const override = plan.monthlyOverrides?.[monthKey];
       
-      // 1. Check Linked Template (The Reflective Requirement)
+      // 1. Check Linked Template
       if (override?.linkedTemplateId && plan.budgetTemplates) {
           const linkedTemplate = plan.budgetTemplates.find(t => t.id === override.linkedTemplateId);
           if (linkedTemplate) return linkedTemplate.configs;
@@ -307,26 +320,31 @@ export const Planning: React.FC = () => {
   };
 
   // --- BULK ASSIGNMENT LOGIC ---
-  const handleToggleMonthAssign = (monthKey: string) => {
+  const handleAssignMonth = (monthKey: string) => {
       if (!plan || !selectedTemplateId) return;
       
-      const currentOverride = plan.monthlyOverrides?.[monthKey];
-      const isCurrentlyLinked = currentOverride?.linkedTemplateId === selectedTemplateId;
-      
       const newOverrides = { ...(plan.monthlyOverrides || {}) };
+      
+      // Force Assign - "Paint" logic
+      newOverrides[monthKey] = {
+          configs: [], 
+          label: draftName,
+          linkedTemplateId: selectedTemplateId
+      };
 
-      if (isCurrentlyLinked) {
-          // Toggle OFF: Revert to Global Default (remove override)
-          delete newOverrides[monthKey];
-      } else {
-          // Toggle ON: Link to Current Draft Template
-          newOverrides[monthKey] = {
-              configs: [], // Empty because we rely on the link
-              label: draftName,
-              linkedTemplateId: selectedTemplateId
-          };
-      }
+      const updatedPlan = { ...plan, monthlyOverrides: newOverrides };
+      db.savePlan(updatedPlan);
+      // NOTE: We update local state immediately. 
+      // The subsequent 'loadData' from subscription will effectively be a no-op 
+      // regarding selection because we removed the selection reset logic.
+      setPlan(updatedPlan);
+  };
 
+  const handleRevertMonth = (monthKey: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!plan) return;
+      const newOverrides = { ...(plan.monthlyOverrides || {}) };
+      delete newOverrides[monthKey];
       const updatedPlan = { ...plan, monthlyOverrides: newOverrides };
       db.savePlan(updatedPlan);
       setPlan(updatedPlan);
@@ -349,27 +367,33 @@ export const Planning: React.FC = () => {
       const displayValue = conf.period === 'DAILY' ? conf.allocatedAmount / DAYS_IN_MONTH :
                            conf.period === 'YEARLY' ? conf.allocatedAmount * MONTHS_IN_YEAR : conf.allocatedAmount;
 
+      const isIgnored = conf.type === 'IGNORE';
+
       return (
-          <div key={conf.categoryId} className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
+          <div key={conf.categoryId} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${isIgnored ? 'bg-slate-950/30 border-slate-800/50 opacity-60' : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'}`}>
               <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-lg">{cat.icon}</div>
               <div className="flex-1 min-w-0">
-                  <p className="font-bold text-sm text-slate-200 truncate">{cat.name}</p>
+                  <p className={`font-bold text-sm truncate ${isIgnored ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{cat.name}</p>
                   <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
               </div>
               
               <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
-                  {(['FIXED', 'VARIABLE'] as const).map(t => (
+                  {(['FIXED', 'VARIABLE', 'IGNORE'] as const).map(t => (
                       <button 
                         key={t}
                         onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
-                        className={`px-2 py-1 rounded-md text-[9px] font-bold ${conf.type === t ? (t==='FIXED' ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white') : 'text-slate-500'}`}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold ${
+                            conf.type === t 
+                            ? (t==='FIXED' ? 'bg-rose-500 text-white' : t==='VARIABLE' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-300') 
+                            : 'text-slate-600'
+                        }`}
                       >
-                          {t[0]}
+                          {t === 'IGNORE' ? 'SKIP' : t[0]}
                       </button>
                   ))}
               </div>
 
-              <div className="flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2">
+              <div className={`flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 ${isIgnored ? 'opacity-50 pointer-events-none' : ''}`}>
                   <input 
                     type="number" 
                     value={displayValue} 
@@ -403,6 +427,11 @@ export const Planning: React.FC = () => {
                     const target = conf.allocatedAmount * multiplier;
                     const pct = target > 0 ? Math.min(100, (spent / target) * 100) : (spent > 0 ? 100 : 0);
                     const isOver = spent > target;
+                    // Tolerance for floating point exact match (within 1 unit)
+                    const isExact = Math.abs(spent - target) < 1; 
+
+                    const colorClass = isExact ? 'bg-yellow-500' : isOver ? 'bg-rose-500' : 'bg-emerald-500';
+                    const textClass = isExact ? 'text-yellow-500' : isOver ? 'text-rose-500' : 'text-emerald-500';
 
                     return (
                         <div key={conf.categoryId} className="flex items-center gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/20 hover:bg-slate-900/40 transition-colors">
@@ -410,12 +439,12 @@ export const Planning: React.FC = () => {
                             <div className="flex-1">
                                 <div className="flex justify-between mb-1">
                                     <span className="text-sm font-bold text-slate-200">{cat?.name}</span>
-                                    <span className={`text-xs font-mono font-bold ${isOver ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                    <span className={`text-xs font-mono font-bold ${textClass}`}>
                                         {formatMoney(spent)} <span className="text-slate-600">/ {formatMoney(target)}</span>
                                     </span>
                                 </div>
                                 <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full ${isOver ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${pct}%`}}></div>
+                                    <div className={`h-full rounded-full ${colorClass}`} style={{width: `${pct}%`}}></div>
                                 </div>
                             </div>
                         </div>
@@ -432,14 +461,30 @@ export const Planning: React.FC = () => {
       const planMeta = getActivePlanMeta(historyDate);
 
       let startOfPeriod = '', endOfPeriod = '';
-      const budgetMultiplier = dashboardView === 'YEAR' ? 12 : 1;
+      let budgetMultiplier = 1;
 
       if (dashboardView === 'MONTH') {
           startOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1).toISOString().split('T')[0];
           endOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0).toISOString().split('T')[0];
-      } else {
+          budgetMultiplier = 1;
+      } else if (dashboardView === 'YEAR') {
           startOfPeriod = new Date(historyDate.getFullYear(), 0, 1).toISOString().split('T')[0];
           endOfPeriod = new Date(historyDate.getFullYear(), 11, 31).toISOString().split('T')[0];
+          budgetMultiplier = 12;
+      } else {
+          // ALL TIME
+          if (transactions.length > 0) {
+              const earliest = transactions.reduce((acc, t) => t.date < acc ? t.date : acc, transactions[0].date);
+              startOfPeriod = earliest;
+          } else {
+              startOfPeriod = new Date().toISOString().split('T')[0];
+          }
+          endOfPeriod = new Date().toISOString().split('T')[0];
+          
+          const startD = new Date(startOfPeriod);
+          const endD = new Date(endOfPeriod);
+          const months = (endD.getFullYear() - startD.getFullYear()) * 12 + (endD.getMonth() - startD.getMonth()) + 1;
+          budgetMultiplier = Math.max(1, months);
       }
 
       const monthlyIncome = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.salary || plan.salary;
@@ -448,41 +493,51 @@ export const Planning: React.FC = () => {
       const totalIncome = monthlyIncome * budgetMultiplier;
       const totalSavings = monthlySavings * budgetMultiplier;
       
-      const totalFixedBudget = activeConfigs.filter(c => c.type === 'FIXED').reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
-      const totalVariableBudget = activeConfigs.filter(c => c.type === 'VARIABLE').reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      const activeDisplayConfigs = activeConfigs.filter(c => c.type !== 'IGNORE');
       
-      const unallocated = totalIncome - totalSavings - totalFixedBudget - totalVariableBudget;
+      // STRICT GROUPING RULES:
+      // Fixed: Type FIXED (Any period).
+      // Variable: Type VARIABLE and NOT (Monthly Once OR Yearly).
+      // OneTime: Type VARIABLE and (Monthly Once OR Yearly).
+      const fixedGroup = activeDisplayConfigs.filter(c => c.type === 'FIXED');
+      const variableGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
+      const oneTimeGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY'));
+
+      const totalFixedBudget = fixedGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      const totalVariableBudget = variableGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      const totalOneTimeBudget = oneTimeGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
+      
+      const totalAllocated = totalFixedBudget + totalVariableBudget + totalOneTimeBudget;
+      const unallocated = totalIncome - totalSavings - totalAllocated;
 
       const relevantTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
       const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
-
-      const fixedGroup = activeConfigs.filter(c => c.type === 'FIXED' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
-      const variableGroup = activeConfigs.filter(c => c.type === 'VARIABLE' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
-      const oneTimeGroup = activeConfigs.filter(c => c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY');
 
       return (
           <div className="space-y-6 animate-in fade-in">
                <div className="flex flex-col md:flex-row justify-between items-center bg-[#0f172a] p-4 rounded-2xl border border-slate-800 gap-4">
                     <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-start">
-                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() - 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronLeft size={20}/></button>
+                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() - 1)))} disabled={dashboardView === 'ALL'} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 disabled:opacity-30"><ChevronLeft size={20}/></button>
                         <div className="text-center">
                             <h2 className="text-xl font-bold text-white">
                                 {dashboardView === 'MONTH' 
                                     ? historyDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) 
-                                    : historyDate.getFullYear()}
+                                    : dashboardView === 'YEAR' ? historyDate.getFullYear() : 'All Time History'}
                             </h2>
-                            <div className="flex items-center justify-center gap-2 mt-1">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
-                                    planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
-                                    planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
-                                    'bg-slate-800 text-slate-400 border-slate-700'
-                                }`}>
-                                    {planMeta.label}
-                                </span>
-                                {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
-                            </div>
+                            {dashboardView !== 'ALL' && (
+                                <div className="flex items-center justify-center gap-2 mt-1">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
+                                        planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                        planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                        'bg-slate-800 text-slate-400 border-slate-700'
+                                    }`}>
+                                        {planMeta.label}
+                                    </span>
+                                    {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
+                                </div>
+                            )}
                         </div>
-                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() + 1)))} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><ChevronRight size={20}/></button>
+                        <button onClick={() => setHistoryDate(new Date(historyDate.setMonth(historyDate.getMonth() + 1)))} disabled={dashboardView === 'ALL'} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 disabled:opacity-30"><ChevronRight size={20}/></button>
                     </div>
 
                     <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -498,17 +553,23 @@ export const Planning: React.FC = () => {
                         >
                             Yearly
                         </button>
+                        <button 
+                            onClick={() => setDashboardView('ALL')}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1 ${dashboardView === 'ALL' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            <Infinity size={12} /> All Time
+                        </button>
                     </div>
                </div>
 
                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">{dashboardView === 'YEAR' ? 'Annual' : 'Monthly'} Budget</p>
-                        <h3 className="text-3xl font-black text-white">{formatMoney(totalFixedBudget + totalVariableBudget)}</h3>
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">{dashboardView === 'ALL' ? 'Lifetime' : dashboardView === 'YEAR' ? 'Annual' : 'Monthly'} Budget</p>
+                        <h3 className="text-3xl font-black text-white">{formatMoney(totalAllocated)}</h3>
                     </div>
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Actual Spent</p>
-                        <h3 className={`text-3xl font-black ${totalSpent > (totalFixedBudget + totalVariableBudget) ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
+                        <h3 className={`text-3xl font-black ${totalSpent > totalAllocated ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
                     </div>
                     <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Unallocated Buffer</p>
@@ -516,9 +577,10 @@ export const Planning: React.FC = () => {
                     </div>
                </div>
 
-               {/* RESTRUCTURED 2-COLUMN LAYOUT */}
+               {/* GRID LAYOUT: Variable (Left), Stacked Fixed & One-Time (Right) */}
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                    {/* LEFT COL: VARIABLE */}
+                    
+                    {/* COL 1: VARIABLE (Full Height) */}
                     <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden h-full">
                          <div className="p-4 border-b border-slate-800 bg-slate-900/50">
                             <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -531,9 +593,8 @@ export const Planning: React.FC = () => {
                          </div>
                     </div>
 
-                    {/* RIGHT COL: FIXED & ONE-TIME */}
+                    {/* COL 2: FIXED + ONE-TIME */}
                     <div className="space-y-6">
-                        {/* FIXED */}
                         <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
                             <div className="p-4 border-b border-slate-800 bg-slate-900/50">
                                 <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -545,17 +606,16 @@ export const Planning: React.FC = () => {
                                 {fixedGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No fixed rules set.</div>}
                             </div>
                         </div>
-
-                        {/* ONE TIME */}
+                        
                         <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
-                             <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                            <div className="p-4 border-b border-slate-800 bg-slate-900/50">
                                 <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div> One-Time / Annual
+                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div> One-Time Payments
                                 </h3>
                             </div>
                             <div className="p-6">
                                 {renderDashboardConfigSection(oneTimeGroup, relevantTxs, budgetMultiplier)}
-                                {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No irregular rules set.</div>}
+                                {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No one-time rules set.</div>}
                             </div>
                         </div>
                     </div>
@@ -565,8 +625,11 @@ export const Planning: React.FC = () => {
   };
 
   const renderStrategyHub = () => {
-      const fixedConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'FIXED') : [];
-      const varConfigs = draftTemplate ? draftTemplate.configs.filter(c => c.type === 'VARIABLE') : [];
+      const allConfigs = draftTemplate ? draftTemplate.configs : [];
+      // Keep edit order simple for better UX
+      const fixedConfigs = allConfigs.filter(c => c.type === 'FIXED');
+      const varConfigs = allConfigs.filter(c => c.type === 'VARIABLE');
+      const ignoredConfigs = allConfigs.filter(c => c.type === 'IGNORE');
 
       // DYNAMIC TIMELINE GENERATION
       const now = new Date();
@@ -603,6 +666,7 @@ export const Planning: React.FC = () => {
 
           const override = plan?.monthlyOverrides?.[monthKey];
           const isLinked = selectedTemplateId ? override?.linkedTemplateId === selectedTemplateId : false;
+          const hasOverride = !!override;
           const isCurrent = y === now.getFullYear() && m === now.getMonth();
           const isPast = currentIterDate < new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -610,6 +674,7 @@ export const Planning: React.FC = () => {
               date: new Date(currentIterDate),
               key: monthKey,
               isLinked,
+              hasOverride,
               isCurrent,
               isPast,
               planName: override?.label || (plan?.activeTemplateId ? (plan.budgetTemplates?.find(t=>t.id===plan.activeTemplateId)?.name) : 'Default')
@@ -686,19 +751,17 @@ export const Planning: React.FC = () => {
                                         className="bg-transparent text-lg font-bold text-white outline-none border-b border-transparent focus:border-slate-600 transition-all placeholder:text-slate-600 min-w-0"
                                         placeholder="Plan Name"
                                     />
-                                    {isActiveGlobal ? (
-                                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
-                                            <Globe size={10} /> Active
+                                    <button 
+                                        onClick={handleSetGlobal}
+                                        className={`ml-4 flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer transition-all border ${isActiveGlobal ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        <div className={`relative w-8 h-4 rounded-full transition-colors ${isActiveGlobal ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                                            <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${isActiveGlobal ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                        </div>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider">
+                                            {isActiveGlobal ? 'Active Strategy' : 'Set as Active'}
                                         </span>
-                                    ) : (
-                                        <button 
-                                            onClick={handleSetGlobal}
-                                            className="px-2 py-1 bg-slate-800 text-slate-400 hover:text-white hover:bg-emerald-600 hover:shadow-lg transition-all rounded-lg text-[10px] font-bold uppercase flex items-center gap-1 group"
-                                            title="Make this the default strategy for all months"
-                                        >
-                                            <Power size={10} className="group-hover:text-white" /> Make Active
-                                        </button>
-                                    )}
+                                    </button>
                                 </div>
                                 <button 
                                     onClick={handleSaveDraft} 
@@ -730,6 +793,12 @@ export const Planning: React.FC = () => {
                                         <h4 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 flex items-center gap-2"><ShoppingBag size={12}/> Variable Budgets</h4>
                                         <div className="space-y-2">{varConfigs.map(renderConfigRow)}</div>
                                     </div>
+                                    {ignoredConfigs.length > 0 && (
+                                        <div>
+                                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Filter size={12}/> Ignored</h4>
+                                            <div className="space-y-2">{ignoredConfigs.map(renderConfigRow)}</div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </>
@@ -813,11 +882,8 @@ export const Planning: React.FC = () => {
                                     </div>
                                     <div className="grid grid-cols-3 gap-2">
                                         {group.months.map((m: any) => (
-                                            <button 
+                                            <div 
                                                 key={m.key}
-                                                onClick={() => handleToggleMonthAssign(m.key)}
-                                                disabled={!selectedTemplateId}
-                                                title={selectedTemplateId ? "Click to toggle this plan for this specific month" : "Select a plan from the left to assign"}
                                                 className={`
                                                     relative p-2 rounded-xl border text-left transition-all overflow-hidden flex flex-col justify-between h-20 group
                                                     ${!selectedTemplateId 
@@ -830,21 +896,39 @@ export const Planning: React.FC = () => {
                                                     }
                                                 `}
                                             >
-                                                <div className="flex justify-between items-start w-full">
+                                                <button 
+                                                    onClick={() => handleAssignMonth(m.key)}
+                                                    disabled={!selectedTemplateId}
+                                                    title="Click to assign current strategy"
+                                                    className="absolute inset-0 w-full h-full z-0"
+                                                />
+                                                
+                                                <div className="flex justify-between items-start w-full relative z-10 pointer-events-none">
                                                     <span className={`text-[10px] font-bold uppercase ${m.isCurrent ? 'text-emerald-400' : ''}`}>
                                                         {m.date.toLocaleDateString('en-US', {month:'short'})}
                                                     </span>
                                                     {m.isLinked && <Check size={10} className="text-indigo-300" />}
                                                 </div>
                                                 
-                                                <span className="text-[9px] font-medium truncate w-full opacity-70">
+                                                <span className="text-[9px] font-medium truncate w-full opacity-70 relative z-10 pointer-events-none">
                                                     {m.isLinked ? draftName : m.planName}
                                                 </span>
 
+                                                {/* Revert Button - Only visible if overridden */}
+                                                {m.hasOverride && (
+                                                    <button 
+                                                        onClick={(e) => handleRevertMonth(m.key, e)}
+                                                        className="absolute top-1 right-1 z-20 p-1 bg-black/20 hover:bg-black/40 rounded-full text-white/70 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                                                        title="Revert to Global Default"
+                                                    >
+                                                        <X size={10} />
+                                                    </button>
+                                                )}
+
                                                 {/* Status Indicators */}
-                                                {m.isCurrent && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>}
-                                                {!m.isCurrent && m.isLinked && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-400"></div>}
-                                            </button>
+                                                {m.isCurrent && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500 pointer-events-none"></div>}
+                                                {!m.isCurrent && m.isLinked && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-400 pointer-events-none"></div>}
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
