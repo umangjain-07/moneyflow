@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { db, subscribe } from '../services/storage';
+import { db, subscribe, getEnv } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
 import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend, Cell } from 'recharts';
@@ -56,7 +56,16 @@ export const Dashboard: React.FC = () => {
   const generateAiInsights = async () => {
     if (transactions.length < 3 || isAiLoading) return;
     
-    const apiKey = process.env.API_KEY;
+    // Safely retrieve Gemini API Key from multiple potential sources
+    let apiKey = getEnv('GEMINI_API_KEY');
+    if (!apiKey) {
+        try {
+            if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+                apiKey = process.env.API_KEY;
+            }
+        } catch (e) {}
+    }
+
     if (!apiKey) return;
 
     setIsAiLoading(true);

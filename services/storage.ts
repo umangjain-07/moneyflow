@@ -7,15 +7,38 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 // @ts-ignore
 import { getFirestore, doc, setDoc, getDoc, collection } from 'firebase/firestore';
 
-const getEnv = (key: string): string => {
-    try {
-        // @ts-ignore
-        if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[`VITE_${key}`]) return import.meta.env[`VITE_${key}`];
-        if (typeof process !== 'undefined' && process.env && process.env[`REACT_APP_${key}`]) return process.env[`REACT_APP_${key}`];
-    } catch (e) {}
-    return '';
+// Helper to safely access environment variables in various environments (Vite, CRA, Node)
+export const getEnv = (key: string): string => {
+    let value = '';
+    
+    // 1. Explicit checks for specific keys to ensure Vite static replacement works
+    // @ts-ignore
+    const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
+    
+    if (metaEnv) {
+        if (key === 'GEMINI_API_KEY') value = metaEnv.VITE_GEMINI_API_KEY;
+        else if (key === 'FIREBASE_API_KEY') value = metaEnv.VITE_FIREBASE_API_KEY;
+        else if (key === 'FIREBASE_AUTH_DOMAIN') value = metaEnv.VITE_FIREBASE_AUTH_DOMAIN;
+        else if (key === 'FIREBASE_PROJECT_ID') value = metaEnv.VITE_FIREBASE_PROJECT_ID;
+        else if (key === 'FIREBASE_STORAGE_BUCKET') value = metaEnv.VITE_FIREBASE_STORAGE_BUCKET;
+        else if (key === 'FIREBASE_MESSAGING_SENDER_ID') value = metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID;
+        else if (key === 'FIREBASE_APP_ID') value = metaEnv.VITE_FIREBASE_APP_ID;
+        
+        // Fallback for dynamic access if not explicitly listed above
+        if (!value) {
+             value = metaEnv[`VITE_${key}`] || metaEnv[key];
+        }
+    }
+
+    // 2. Fallback to process.env
+    if (!value && typeof process !== 'undefined' && process.env) {
+        value = process.env[`VITE_${key}`] || process.env[`REACT_APP_${key}`] || process.env[key] || '';
+    }
+
+    return value || '';
 };
 
+// Explicit configuration object for Firebase to ensure bundlers pick up the keys
 const FIREBASE_CONFIG = {
   apiKey: getEnv('FIREBASE_API_KEY'),
   authDomain: getEnv('FIREBASE_AUTH_DOMAIN'),
@@ -83,7 +106,7 @@ class StorageService {
       });
 
       if (invalidKeys.length > 0) {
-        console.warn(`[MoneyFlow] Firebase Config Incomplete (Missing/Placeholder: ${invalidKeys.join(', ')}). Switching to LOCAL OFFLINE MODE.`);
+        console.warn(`[MoneyFlow] Firebase Config Incomplete. Missing: ${invalidKeys.join(', ')}. Switching to LOCAL OFFLINE MODE.`);
         this.downgradeToLocal();
         return;
       }

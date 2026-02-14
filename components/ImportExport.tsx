@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, subscribe, getAutoEmoji } from '../services/storage';
+import { db, subscribe, getAutoEmoji, getEnv } from '../services/storage';
 import { Upload, FileSpreadsheet, CheckCircle, MoveRight, HelpCircle, Save, ArrowRight, ArrowDownLeft, ArrowUpRight, Search, Settings, Download, Heart, Coffee, FileText, Type, Copy, Check, Sparkles, Zap, ChevronDown, Layers, X, BrainCircuit, Activity, Plus, CreditCard, Wallet, TrendingUp, CheckCircle2, PieChart } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -269,7 +269,8 @@ export const ImportExport: React.FC = () => {
     setIsAiClassifying(true);
     setAiError('');
 
-    const apiKey = process.env.API_KEY;
+    // Retrieve Gemini API Key from .env or fallback to system process.env
+    const apiKey = getEnv('GEMINI_API_KEY') || process.env.API_KEY;
     if (!apiKey) {
         setAiError("API Configuration Missing. Please set API_KEY.");
         setIsAiClassifying(false);
@@ -493,53 +494,41 @@ export const ImportExport: React.FC = () => {
                     {accounts.length > 0 && (
                         <button 
                             onClick={() => setShowAccountModal(true)}
-                            className="w-full py-3 mt-2 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-900/50 transition-all text-xs font-bold flex items-center justify-center gap-2"
+                            className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold uppercase tracking-widest transition-all mt-4"
                         >
-                            <Plus size={14} /> Add New Account
+                            + Add New Account
                         </button>
                     )}
                 </div>
             </div>
 
-            <div className="md:col-span-2 flex flex-col">
-                <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden flex flex-col flex-1 shadow-2xl">
-                    <div className="flex border-b border-slate-800 bg-slate-900/30">
-                        <button onClick={() => setImportSource('FILE')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'FILE' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
-                            <FileSpreadsheet size={18} /> File Upload
-                        </button>
-                        <button onClick={() => setImportSource('TEXT')} className={`flex-1 p-5 text-sm font-bold flex items-center justify-center gap-2 transition-all ${importSource === 'TEXT' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}>
-                            <Type size={18} /> Paste Content
-                        </button>
+            <div className="md:col-span-2 space-y-6">
+                <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden flex flex-col h-full shadow-2xl">
+                    <div className="flex border-b border-slate-800">
+                        <button onClick={() => setImportSource('FILE')} className={`flex-1 py-4 text-xs font-bold uppercase tracking-widest transition-colors ${importSource === 'FILE' ? 'bg-slate-900/80 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Upload File (XLS/CSV)</button>
+                        <button onClick={() => setImportSource('TEXT')} className={`flex-1 py-4 text-xs font-bold uppercase tracking-widest transition-colors ${importSource === 'TEXT' ? 'bg-slate-900/80 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Paste Text</button>
                     </div>
 
-                    <div className="p-4 md:p-8 flex-1 flex flex-col">
+                    <div className="p-8 flex-1 flex flex-col justify-center items-center">
                         {importSource === 'FILE' ? (
-                            <div className={`border-2 border-dashed rounded-2xl p-8 md:p-16 flex-1 flex flex-col items-center justify-center text-center transition-all relative ${targetAccount ? 'border-emerald-500/30 bg-emerald-500/5 cursor-pointer hover:bg-emerald-500/10' : 'border-slate-800 hover:bg-slate-900/50'}`}>
-                                <input type="file" accept=".csv,.xlsx,.xls" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={handleFile} onClick={handleFileClick} />
-                                <div className="p-5 bg-emerald-500/10 rounded-full mb-4">
-                                    <Upload size={48} className="text-emerald-500 animate-bounce" />
+                            <div className="w-full h-full min-h-[300px] border-2 border-dashed border-slate-700 rounded-2xl flex flex-col items-center justify-center relative group hover:border-emerald-500/50 hover:bg-emerald-500/5 transition-all">
+                                <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFile} onClick={handleFileClick} className="absolute inset-0 opacity-0 cursor-pointer" />
+                                <div className="p-4 bg-slate-800 rounded-full mb-4 group-hover:scale-110 transition-transform shadow-lg">
+                                    <Upload size={32} className="text-emerald-500" />
                                 </div>
-                                <p className="font-bold text-slate-200 text-lg">Click to select or drag statement here</p>
-                                <p className="text-xs text-slate-500 mt-2 font-mono">XLSX, XLS, or CSV formats</p>
-                                {!targetAccount && <p className="mt-4 text-xs font-bold text-rose-500 bg-rose-500/10 px-3 py-1 rounded-full">Select an account from the left panel first</p>}
+                                <h3 className="text-xl font-bold text-white mb-2">Drop statement here</h3>
+                                <p className="text-slate-500 text-sm max-w-xs text-center">Supports Excel (.xlsx) and CSV formats. Max file size 5MB.</p>
+                                {!targetAccount && <p className="mt-4 text-rose-500 text-xs font-bold uppercase animate-pulse">Select an account first</p>}
                             </div>
                         ) : (
-                            <div className="space-y-4 flex-1 flex flex-col">
-                                <p className="text-xs text-slate-500">Copy table rows from your Bank PDF and paste them below.</p>
+                            <div className="w-full h-full flex flex-col gap-4">
                                 <textarea 
-                                    className="w-full flex-1 min-h-[300px] bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs font-mono text-emerald-400 outline-none focus:border-emerald-500/50 resize-none placeholder:text-slate-800"
-                                    placeholder="01/01/24    Amazon Marketplace  -45.00"
+                                    className="flex-1 w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm font-mono text-slate-300 outline-none focus:border-emerald-500/50 min-h-[300px]" 
+                                    placeholder="Paste rows from Excel or Google Sheets here..."
                                     value={pastedText}
                                     onChange={e => setPastedText(e.target.value)}
-                                    disabled={!targetAccount}
                                 />
-                                <button 
-                                    onClick={handleTextImport}
-                                    disabled={!pastedText.trim() || !targetAccount}
-                                    className="w-full py-4 bg-emerald-600 rounded-2xl text-white font-bold hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/40 disabled:opacity-20 flex items-center justify-center gap-2"
-                                >
-                                    <Zap size={18} /> Auto-Detect Patterns
-                                </button>
+                                <button onClick={handleTextImport} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20">Process Text Data</button>
                             </div>
                         )}
                     </div>
@@ -549,232 +538,192 @@ export const ImportExport: React.FC = () => {
       )}
 
       {stage === 'MAPPING' && (
-          <div className="space-y-6 animate-in slide-in-from-right duration-300">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                  <div>
-                    <h2 className="text-xl font-bold text-white leading-none">Map Columns</h2>
-                    <p className="text-xs text-slate-500 mt-1">Verify identified headers</p>
-                  </div>
-                  <button onClick={analyzeAndClassify} className="w-full md:w-auto bg-emerald-600 px-10 py-3.5 rounded-2xl text-white font-bold flex items-center justify-center gap-2 shadow-2xl transition-all hover:bg-emerald-500">
-                      Next: Analyze <MoveRight size={18}/>
-                  </button>
-              </div>
+        <div className="bg-[#0f172a] rounded-2xl border border-slate-800 p-6 shadow-2xl animate-in slide-in-from-right-8 duration-500">
+             <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
+                 <div>
+                    <h2 className="text-xl font-bold text-white mb-1">Map Columns</h2>
+                    <p className="text-slate-500 text-sm">Match your file columns to our data structure</p>
+                 </div>
+                 <button onClick={() => setStage('UPLOAD')} className="text-sm font-bold text-slate-500 hover:text-white">Cancel</button>
+             </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                  <div className="lg:col-span-3 bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden shadow-xl flex flex-col">
-                      <div className="p-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Statement Preview</span>
-                          <span className="text-[10px] text-slate-600 italic">Horizontal swipe allowed</span>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-[11px] font-mono border-collapse min-w-[600px]">
-                            <thead className="bg-slate-900/50 text-slate-500 sticky top-0 uppercase tracking-widest z-10">
-                                <tr>{fullData[0]?.map((h:any, i:number) => {
-                                    const isMapped = Object.values(map).includes(i);
-                                    return <th key={i} className={`p-4 border-b border-slate-800 ${isMapped ? 'text-emerald-400 bg-emerald-950/40' : ''}`}>{h || `COL ${i+1}`}</th>;
-                                })}</tr>
-                            </thead>
-                            <tbody>
-                                {previewData.slice(1).map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/20">
-                                        {row.map((c:any, j:number) => (
-                                            <td key={j} className={`p-4 truncate max-w-[150px] text-slate-400 ${Object.values(map).includes(j) ? 'text-slate-200 font-bold bg-emerald-950/10' : ''}`}>{c}</td>
-                                        ))}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                      </div>
-                  </div>
-
-                  <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 space-y-6 shadow-xl h-fit">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-2">Header Bindings</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-                          {[
-                              { id: 'date', label: 'Date' },
-                              { id: 'amount', label: 'Amount' },
-                              { id: 'desc', label: 'Description' },
-                              { id: 'type', label: 'Type / DR-CR' }
-                          ].map(field => (
-                              <div key={field.id} className="space-y-1.5">
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block pl-1">{field.label}</label>
-                                  <div className="relative">
-                                      <select 
-                                          className={`w-full appearance-none p-3 rounded-xl text-xs font-bold bg-slate-950 border transition-all ${map[field.id as keyof typeof map] > -1 ? 'border-emerald-500/40 text-emerald-400' : 'border-slate-800 text-slate-600'}`}
-                                          value={map[field.id as keyof typeof map]}
-                                          onChange={e => {const nm = {...map, [field.id]: parseInt(e.target.value)}; setMap(nm); saveMappingState(nm, amountMode)}}
-                                      >
-                                          <option value="-1">-- Manual Select --</option>
-                                          {fullData[0]?.map((h:any, i:number) => <option key={i} value={i}>{h || `Col ${i+1}`}</option>)}
-                                      </select>
-                                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" size={12} />
-                                  </div>
-                              </div>
-                          ))}
-                      </div>
-                      
-                      <div className="space-y-3 pt-4 border-t border-slate-800">
-                        <label className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
-                            <Sparkles size={10} /> Amount Logic
-                        </label>
-                        <div className="relative">
+             <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-8">
+                 {([
+                     { label: 'Date', key: 'date', req: true, icon: <Coffee size={14}/> },
+                     { label: 'Description', key: 'desc', req: true, icon: <FileText size={14}/> },
+                     { label: 'Amount', key: 'amount', req: true, icon: <Type size={14}/> },
+                     { label: 'Category (Opt)', key: 'cat', req: false, icon: <Layers size={14}/> },
+                     { label: 'Type (Opt)', key: 'type', req: false, icon: <Settings size={14}/> }
+                 ] as const).map(f => (
+                     <div key={f.key} className="bg-slate-900/50 p-4 rounded-xl border border-slate-800">
+                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                             {f.icon} {f.label} {f.req && <span className="text-rose-500">*</span>}
+                         </label>
+                         <div className="relative">
                             <select 
-                                className="w-full appearance-none p-3 rounded-xl text-xs font-bold bg-slate-950 border border-emerald-500/20 text-emerald-300 outline-none cursor-pointer"
-                                value={amountMode}
-                                onChange={e => {setAmountMode(e.target.value as AmountMode); saveMappingState(map, e.target.value as AmountMode)}}
+                                value={map[f.key]} 
+                                onChange={(e) => { const newMap = { ...map, [f.key]: parseInt(e.target.value) }; setMap(newMap); saveMappingState(newMap, amountMode); }}
+                                className={`w-full appearance-none bg-slate-950 border border-slate-800 rounded-xl py-3 pl-3 pr-8 text-xs font-bold outline-none cursor-pointer ${map[f.key] > -1 ? 'text-emerald-400 border-emerald-500/30' : 'text-slate-400'}`}
                             >
-                                <option value="SIGNED">Signed (-/+) Values</option>
-                                <option value="UNSIGNED_TYPE">Positive Values + Type Col</option>
+                                <option value={-1}>Select Column...</option>
+                                {fullData[0]?.map((h: any, i: number) => <option key={i} value={i}>{h || `Col ${i+1}`}</option>)}
                             </select>
-                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500 pointer-events-none" size={12} />
-                        </div>
-                      </div>
-                  </div>
-              </div>
-          </div>
+                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={14} />
+                         </div>
+                     </div>
+                 ))}
+             </div>
+
+             <div className="flex items-center gap-4 mb-8 bg-slate-900/30 p-4 rounded-xl border border-slate-800">
+                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Amount Format:</span>
+                 <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
+                     <button onClick={() => { setAmountMode('SIGNED'); saveMappingState(map, 'SIGNED'); }} className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${amountMode === 'SIGNED' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Signed (-Expense / +Income)</button>
+                     <button onClick={() => { setAmountMode('UNSIGNED_TYPE'); saveMappingState(map, 'UNSIGNED_TYPE'); }} className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${amountMode === 'UNSIGNED_TYPE' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Unsigned (Requires Type Col)</button>
+                 </div>
+             </div>
+             
+             <div className="border border-slate-800 rounded-xl overflow-hidden mb-8">
+                 <table className="w-full text-left text-xs text-slate-400">
+                     <thead className="bg-slate-900 border-b border-slate-800 text-slate-500 font-bold uppercase">
+                         <tr>{fullData[0]?.map((h: any, i: number) => <th key={i} className={`p-3 whitespace-nowrap ${Object.values(map).includes(i) ? 'text-emerald-500 bg-emerald-500/5' : ''}`}>{h}</th>)}</tr>
+                     </thead>
+                     <tbody>
+                         {previewData.slice(1).map((row, i) => (
+                             <tr key={i} className="border-b border-slate-800 last:border-0 hover:bg-slate-900/30">
+                                 {row.map((c: any, j: number) => (
+                                     <td key={j} className={`p-3 truncate max-w-[150px] ${Object.values(map).includes(j) ? 'text-slate-200 font-medium' : ''}`}>{c}</td>
+                                 ))}
+                             </tr>
+                         ))}
+                     </tbody>
+                 </table>
+             </div>
+
+             <div className="flex justify-end">
+                 <button onClick={analyzeAndClassify} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl transition-all shadow-xl shadow-emerald-900/20 flex items-center gap-2">
+                     Analyze & Classify <ArrowRight size={18} />
+                 </button>
+             </div>
+        </div>
       )}
 
       {stage === 'CLASSIFY' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                  <div className="w-full md:w-auto">
-                    <h2 className="text-2xl font-bold text-white leading-none">Auto-Categorize Patterns</h2>
-                    <p className="text-sm text-slate-500 mt-2">Verify {classifications.length} detected patterns</p>
+          <div className="space-y-6 animate-in slide-in-from-right-8 duration-500">
+              <div className="bg-[#0f172a] rounded-2xl border border-slate-800 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
+                  <div>
+                      <h2 className="text-xl font-bold text-white mb-1">Verify Classifications</h2>
+                      <p className="text-slate-500 text-sm">Review identified transactions before importing.</p>
                   </div>
-                  <div className="flex gap-3 w-full md:w-auto items-center">
-                    {aiError && <span className="text-[10px] text-rose-500 font-bold px-2 hidden lg:block">{aiError}</span>}
-                    <button 
-                        onClick={handleAiCategorize}
+                  <div className="flex items-center gap-3">
+                      {aiError && <span className="text-rose-500 text-xs font-bold px-3 py-1 bg-rose-500/10 rounded-lg border border-rose-500/20">{aiError}</span>}
+                      <button 
+                        onClick={handleAiCategorize} 
                         disabled={isAiClassifying}
-                        className="flex-1 md:flex-none bg-indigo-600/20 border border-indigo-500/30 px-6 py-4 rounded-2xl text-indigo-400 font-bold flex items-center justify-center gap-2 hover:bg-indigo-600/30 transition-all disabled:opacity-50"
-                    >
-                        {isAiClassifying ? <Activity size={20} className="animate-spin" /> : <BrainCircuit size={20}/>}
-                        {isAiClassifying ? 'AI Categorizing...' : 'AI Power Classify'}
-                    </button>
-                    <button onClick={finishImport} className="flex-1 md:flex-none bg-emerald-600 px-12 py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 shadow-2xl active:scale-95 transition-all">
-                        <Save size={20}/> Finalize Import
-                    </button>
+                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-indigo-900/20 disabled:opacity-50"
+                      >
+                          {isAiClassifying ? <Activity className="animate-spin" size={16} /> : <BrainCircuit size={16} />}
+                          {isAiClassifying ? 'AI Processing...' : 'Auto-Classify with AI'}
+                      </button>
+                      <button onClick={finishImport} className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-900/20">
+                          Confirm Import <Check size={18} />
+                      </button>
                   </div>
               </div>
-              
-              {/* Mobile Error display */}
-              {aiError && <div className="lg:hidden p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-400 font-bold text-center">{aiError}</div>}
 
-              <div className="flex flex-col gap-4">
-                {classifications.map((item, idx) => (
-                    <div key={idx} className="bg-[#0f172a] border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col md:flex-row md:items-center gap-6">
-                        <div className="flex-1 min-w-0 pr-4">
-                            <div className="flex items-center gap-3 mb-1">
-                                <h4 className="font-bold text-slate-200 truncate break-all">{item.keyword}</h4>
-                                <span className="shrink-0 px-2 py-0.5 bg-slate-900 text-slate-500 text-[9px] font-black uppercase rounded border border-slate-800">{item.count} items</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 truncate">{item.originalSample}</p>
-                        </div>
-                        
-                        <div className="flex flex-wrap md:flex-nowrap gap-4 flex-shrink-0 w-full md:w-auto">
-                            <div className="w-full sm:w-48">
-                                <label className="text-[9px] font-bold text-slate-600 uppercase tracking-widest block mb-1.5 pl-1">Target Category</label>
-                                <div className="relative">
+              <div className="grid grid-cols-1 gap-3">
+                  {classifications.map((item, idx) => (
+                      <div key={idx} className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center gap-4 hover:border-slate-700 transition-colors group">
+                          <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-sm font-bold text-white truncate">{item.keyword}</span>
+                                  <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">{item.count}x</span>
+                              </div>
+                              <p className="text-xs text-slate-500 truncate italic">"{item.originalSample}"</p>
+                              <p className="text-[10px] text-slate-600 font-mono mt-1">Avg: {settings.currencySymbol}{Math.abs(item.sampleAmount).toFixed(2)}</p>
+                          </div>
+                          
+                          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                                <div className="relative min-w-[140px]">
                                     <select 
-                                        className={`w-full appearance-none p-2.5 rounded-xl border text-[11px] font-bold outline-none transition-all ${item.targetCategoryId === 'NEW' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-slate-950 border-slate-800 text-emerald-400'}`}
                                         value={item.targetCategoryId}
-                                        onChange={e => {const nc = [...classifications]; nc[idx].targetCategoryId = e.target.value; setClassifications(nc)}}
+                                        onChange={(e) => {
+                                            const newItem = { ...item };
+                                            if (e.target.value === 'NEW') {
+                                                newItem.targetCategoryId = 'NEW';
+                                            } else {
+                                                const cat = categories.find(c => c.id === e.target.value);
+                                                if(cat) {
+                                                    newItem.targetCategoryId = cat.id;
+                                                    newItem.newType = cat.type;
+                                                    newItem.newNecessity = cat.necessity || 'WANT';
+                                                    newItem.newIcon = cat.icon || '🏷️';
+                                                }
+                                            }
+                                            const newClass = [...classifications];
+                                            newClass[idx] = newItem;
+                                            setClassifications(newClass);
+                                        }}
+                                        className="w-full appearance-none bg-slate-900 border border-slate-800 text-slate-200 text-xs font-bold rounded-lg py-2 pl-3 pr-8 outline-none focus:border-emerald-500/50"
                                     >
-                                        <option value="NEW">✨ New Category</option>
-                                        {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                                        <option value="NEW">+ Create New</option>
+                                        <optgroup label="Existing Categories">
+                                            {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                                        </optgroup>
                                     </select>
-                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" size={12} />
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={12} />
                                 </div>
-                            </div>
-
-                            {item.targetCategoryId === 'NEW' && (
-                                <div className="flex flex-wrap sm:flex-nowrap gap-3 items-end w-full sm:w-auto">
-                                    <div className="w-full sm:w-32">
-                                        <label className="text-[9px] font-bold text-slate-600 uppercase tracking-widest block mb-1.5 pl-1">Role</label>
-                                        <div className="relative">
-                                            <select 
-                                                className={`w-full appearance-none bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-[11px] font-bold outline-none ${item.newType === 'INCOME' ? 'text-emerald-500' : item.newType === 'INVESTMENT' ? 'text-purple-400' : 'text-rose-500'}`}
-                                                value={item.newType}
-                                                onChange={e => {const nc = [...classifications]; nc[idx].newType = e.target.value as any; setClassifications(nc)}}
-                                            >
-                                                <option value="EXPENSE">EXPENSE</option>
-                                                <option value="INCOME">INCOME</option>
-                                                <option value="INVESTMENT">INVESTMENT</option>
-                                            </select>
-                                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" size={12} />
-                                        </div>
-                                    </div>
-
-                                    {item.newType === 'EXPENSE' && (
-                                        <div className="w-full sm:w-28">
-                                            <label className="text-[9px] font-bold text-slate-600 uppercase tracking-widest block mb-1.5 pl-1">Necessity</label>
-                                            <div className="relative">
-                                                <select 
-                                                    className="w-full appearance-none bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-[11px] font-bold text-slate-400 outline-none"
-                                                    value={item.newNecessity}
-                                                    onChange={e => {const nc = [...classifications]; nc[idx].newNecessity = e.target.value as any; setClassifications(nc)}}
-                                                >
-                                                    <option value="NEED">NEED</option>
-                                                    <option value="WANT">WANT</option>
-                                                </select>
-                                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" size={12} />
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div className="w-full sm:w-32">
-                                        <label className="text-[9px] font-bold text-slate-600 uppercase tracking-widest block mb-1.5 pl-1">Group</label>
-                                        <input 
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-[11px] font-bold text-slate-400 outline-none focus:border-emerald-500/50" 
-                                            value={item.newGroup} 
-                                            onChange={e => {const nc = [...classifications]; nc[idx].newGroup = e.target.value; setClassifications(nc)}} 
-                                            list="group_list" 
-                                        />
-                                    </div>
+                                
+                                <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                                    {(['INCOME', 'EXPENSE', 'INVESTMENT'] as const).map(t => (
+                                        <button 
+                                            key={t}
+                                            onClick={() => {
+                                                const newClass = [...classifications];
+                                                newClass[idx].newType = t;
+                                                setClassifications(newClass);
+                                            }}
+                                            className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newType === t ? (t === 'INCOME' ? 'bg-emerald-500 text-slate-950' : t === 'INVESTMENT' ? 'bg-purple-500 text-white' : 'bg-rose-500 text-white') : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            {t.substring(0,3)}
+                                        </button>
+                                    ))}
                                 </div>
-                            )}
-                        </div>
-                    </div>
-                ))}
+
+                                {item.newType === 'EXPENSE' && (
+                                    <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                                        <button onClick={() => { const nc = [...classifications]; nc[idx].newNecessity = 'NEED'; setClassifications(nc); }} className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newNecessity === 'NEED' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Need</button>
+                                        <button onClick={() => { const nc = [...classifications]; nc[idx].newNecessity = 'WANT'; setClassifications(nc); }} className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newNecessity === 'WANT' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Want</button>
+                                    </div>
+                                )}
+                          </div>
+                      </div>
+                  ))}
               </div>
           </div>
       )}
-      <datalist id="group_list">{groupNames.map(g => <option key={g} value={g}/>)}</datalist>
 
-      {/* NEW ACCOUNT MODAL */}
+      {/* ACCOUNT CREATION MODAL */}
       {showAccountModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
-              <div className="bg-[#0f172a] border border-slate-800 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-300">
-                  <h3 className="text-xl font-bold text-white mb-6">Quick Add Account</h3>
-                  <div className="space-y-4">
-                      <div>
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Account Name</label>
-                          <input 
-                              type="text" 
-                              className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-white outline-none focus:border-emerald-500/50"
-                              placeholder="e.g. Chase Checking"
-                              value={newAccountName}
-                              onChange={e => setNewAccountName(e.target.value)}
-                              autoFocus
-                          />
-                      </div>
-                      <div>
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5 pl-1">Initial Balance</label>
-                          <input 
-                              type="number" 
-                              className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-white outline-none focus:border-emerald-500/50"
-                              placeholder="0.00"
-                              value={newAccountBalance}
-                              onChange={e => setNewAccountBalance(e.target.value)}
-                          />
-                      </div>
-                      <div className="flex gap-3 pt-4">
-                          <button onClick={() => setShowAccountModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:text-white transition-colors">Cancel</button>
-                          <button onClick={createNewAccount} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-500 transition-colors">Create</button>
-                      </div>
-                  </div>
-              </div>
-          </div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAccountModal(false)} />
+            <div className="relative bg-[#0f172a] border border-slate-800 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-bold text-white">New Account</h3>
+                    <button onClick={() => setShowAccountModal(false)}><X size={18} className="text-slate-500 hover:text-white"/></button>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Account Name</label>
+                        <input autoFocus type="text" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-emerald-500/50" placeholder="e.g. Chase Checking" value={newAccountName} onChange={e => setNewAccountName(e.target.value)} />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Initial Balance</label>
+                        <input type="number" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-emerald-500/50" placeholder="0.00" value={newAccountBalance} onChange={e => setNewAccountBalance(e.target.value)} />
+                    </div>
+                    <button onClick={createNewAccount} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-900/20 transition-all mt-2">Create Account</button>
+                </div>
+            </div>
+        </div>
       )}
     </div>
   );
