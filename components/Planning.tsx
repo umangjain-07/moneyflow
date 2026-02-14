@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight, Circle, Activity } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -67,9 +67,7 @@ export const Planning: React.FC = () => {
     const existingPlan = db.getPlan();
     if (existingPlan) {
         setPlan(existingPlan);
-        // Note: Auto-selection logic moved to useEffect to prevent stale-closure resets
     } else {
-        // Init minimal plan if none exists
         const initialPlan: FinancialPlan = {
             salary: 0, savingsGoal: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString(),
             categoryConfigs: [], monthlyOverrides: {}, budgetTemplates: []
@@ -105,8 +103,6 @@ export const Planning: React.FC = () => {
 
       const found = plan.budgetTemplates?.find(t => t.id === selectedTemplateId);
       if (found) {
-          // Deep copy to allow editing without immediate save
-          // Merge with current categories to ensure all cats are present
           const validCats = categories.filter(c => c.type !== 'INCOME');
           const mergedConfigs = validCats.map(c => {
               const existing = found.configs.find(conf => conf.categoryId === c.id);
@@ -135,16 +131,13 @@ export const Planning: React.FC = () => {
       template.configs.forEach(c => {
           if (c.type === 'IGNORE') return;
 
-          // Normalize to monthly for projection
           const monthlyAmount = c.period === 'DAILY' ? c.allocatedAmount * 30 :
                                 c.period === 'YEARLY' ? c.allocatedAmount / 12 :
                                 c.allocatedAmount;
 
           if (c.type === 'FIXED') {
-              // ALL Fixed items go here, regardless of frequency
               fixed += monthlyAmount;
           } else if (c.type === 'VARIABLE') {
-              // Variable items split based on frequency
               if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY') {
                   oneTime += monthlyAmount;
               } else {
@@ -165,29 +158,19 @@ export const Planning: React.FC = () => {
 
   const projection = useMemo(() => calculateProjection(draftTemplate), [draftTemplate]);
 
-  // --- LOGIC HELPERS ---
-
   const getActiveConfigs = (targetDate: Date) => {
       if (!plan) return [];
       const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
-      
       const override = plan.monthlyOverrides?.[monthKey];
-      
-      // 1. Check Linked Template
       if (override?.linkedTemplateId && plan.budgetTemplates) {
           const linkedTemplate = plan.budgetTemplates.find(t => t.id === override.linkedTemplateId);
           if (linkedTemplate) return linkedTemplate.configs;
       }
-
-      // 2. Check Manual Override
       if (override && override.configs.length > 0) return override.configs;
-
-      // 3. Fallback to Active Global Template
       if (plan.activeTemplateId && plan.budgetTemplates) {
           const globalTemplate = plan.budgetTemplates.find(t => t.id === plan.activeTemplateId);
           if (globalTemplate) return globalTemplate.configs;
       }
-
       return plan.categoryConfigs;
   };
 
@@ -262,15 +245,12 @@ export const Planning: React.FC = () => {
 
   const handleSaveDraft = () => {
       if (!plan || !draftTemplate) return;
-      
       const updatedTemplates = plan.budgetTemplates?.map(t => 
           t.id === draftTemplate.id ? { ...draftTemplate, name: draftName } : t
       ) || [];
-
       const updatedPlan = { ...plan, budgetTemplates: updatedTemplates };
       db.savePlan(updatedPlan);
       setPlan(updatedPlan);
-      
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
   };
@@ -278,7 +258,6 @@ export const Planning: React.FC = () => {
   const handleDeleteTemplate = () => {
       if (!plan || !selectedTemplateId) return;
       if (!confirm("Delete this plan? Months linked to it will revert to the Global Default.")) return;
-
       const updatedTemplates = plan.budgetTemplates?.filter(t => t.id !== selectedTemplateId) || [];
       const newOverrides = { ...plan.monthlyOverrides };
       Object.keys(newOverrides).forEach(k => {
@@ -286,14 +265,12 @@ export const Planning: React.FC = () => {
               delete newOverrides[k]; 
           }
       });
-
       const updatedPlan = { 
           ...plan, 
           budgetTemplates: updatedTemplates, 
           monthlyOverrides: newOverrides,
           activeTemplateId: plan.activeTemplateId === selectedTemplateId ? (updatedTemplates[0]?.id || '') : plan.activeTemplateId
       };
-      
       db.savePlan(updatedPlan);
       setPlan(updatedPlan);
       setSelectedTemplateId(updatedTemplates[0]?.id || null);
@@ -311,32 +288,22 @@ export const Planning: React.FC = () => {
     if (!draftTemplate) return;
     const conf = draftTemplate.configs.find(c => c.categoryId === catId);
     if(!conf) return;
-    
     const next = conf.period === 'DAILY' ? 'MONTHLY_NET' :
                  conf.period === 'MONTHLY_NET' ? 'MONTHLY_ONCE' :
                  conf.period === 'MONTHLY_ONCE' ? 'YEARLY' : 'DAILY';
-    
     handleConfigChange(catId, 'period', next);
   };
 
-  // --- BULK ASSIGNMENT LOGIC ---
   const handleAssignMonth = (monthKey: string) => {
       if (!plan || !selectedTemplateId) return;
-      
       const newOverrides = { ...(plan.monthlyOverrides || {}) };
-      
-      // Force Assign - "Paint" logic
       newOverrides[monthKey] = {
           configs: [], 
           label: draftName,
           linkedTemplateId: selectedTemplateId
       };
-
       const updatedPlan = { ...plan, monthlyOverrides: newOverrides };
       db.savePlan(updatedPlan);
-      // NOTE: We update local state immediately. 
-      // The subsequent 'loadData' from subscription will effectively be a no-op 
-      // regarding selection because we removed the selection reset logic.
       setPlan(updatedPlan);
   };
 
@@ -363,10 +330,8 @@ export const Planning: React.FC = () => {
   const renderConfigRow = (conf: CategoryBudgetConfig) => {
       const cat = categories.find(c => c.id === conf.categoryId);
       if (!cat) return null;
-      
       const displayValue = conf.period === 'DAILY' ? conf.allocatedAmount / DAYS_IN_MONTH :
                            conf.period === 'YEARLY' ? conf.allocatedAmount * MONTHS_IN_YEAR : conf.allocatedAmount;
-
       const isIgnored = conf.type === 'IGNORE';
 
       return (
@@ -376,7 +341,6 @@ export const Planning: React.FC = () => {
                   <p className={`font-bold text-sm truncate ${isIgnored ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{cat.name}</p>
                   <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
               </div>
-              
               <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
                   {(['FIXED', 'VARIABLE', 'IGNORE'] as const).map(t => (
                       <button 
@@ -392,7 +356,6 @@ export const Planning: React.FC = () => {
                       </button>
                   ))}
               </div>
-
               <div className={`flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 ${isIgnored ? 'opacity-50 pointer-events-none' : ''}`}>
                   <input 
                     type="number" 
@@ -407,7 +370,6 @@ export const Planning: React.FC = () => {
                     placeholder="0"
                   />
               </div>
-
               <button onClick={() => handlePeriodToggle(conf.categoryId)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">
                   <Repeat size={14} />
               </button>
@@ -423,13 +385,10 @@ export const Planning: React.FC = () => {
                  {configs.map(conf => {
                     const cat = categories.find(c => c.id === conf.categoryId);
                     const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
-                    
                     const target = conf.allocatedAmount * multiplier;
                     const pct = target > 0 ? Math.min(100, (spent / target) * 100) : (spent > 0 ? 100 : 0);
                     const isOver = spent > target;
-                    // Tolerance for floating point exact match (within 1 unit)
                     const isExact = Math.abs(spent - target) < 1; 
-
                     const colorClass = isExact ? 'bg-yellow-500' : isOver ? 'bg-rose-500' : 'bg-emerald-500';
                     const textClass = isExact ? 'text-yellow-500' : isOver ? 'text-rose-500' : 'text-emerald-500';
 
@@ -452,6 +411,49 @@ export const Planning: React.FC = () => {
                  })}
           </div>
       );
+  };
+
+  const renderOneTimeSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[], multiplier: number) => {
+    if (configs.length === 0) return null;
+
+    return (
+        <div className="grid grid-cols-1 gap-3">
+            {configs.map(conf => {
+                const cat = categories.find(c => c.id === conf.categoryId);
+                const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
+                const target = conf.allocatedAmount * multiplier;
+                const isPaid = spent > 0;
+
+                return (
+                    <div key={conf.categoryId} className={`flex items-center justify-between p-4 rounded-xl border transition-all ${isPaid ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-slate-900/20 border-slate-800 hover:border-slate-700'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${isPaid ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}>
+                                {isPaid ? <Check size={20} strokeWidth={4} /> : cat?.icon}
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <p className={`font-bold text-sm ${isPaid ? 'text-emerald-400' : 'text-slate-200'}`}>{cat?.name}</p>
+                                    <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${isPaid ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}>
+                                        {isPaid ? 'PAID' : 'PENDING'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                                    {isPaid ? `Paid ${formatMoney(spent)}` : `Budget: ${formatMoney(target)}`}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                             {isPaid ? (
+                                <p className="text-sm font-bold text-emerald-500">Done</p>
+                             ) : (
+                                <p className="text-sm font-bold text-slate-500">--</p>
+                             )}
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
   };
 
   const renderDashboard = () => {
@@ -495,23 +497,27 @@ export const Planning: React.FC = () => {
       
       const activeDisplayConfigs = activeConfigs.filter(c => c.type !== 'IGNORE');
       
-      // STRICT GROUPING RULES:
-      // Fixed: Type FIXED (Any period).
-      // Variable: Type VARIABLE and NOT (Monthly Once OR Yearly).
-      // OneTime: Type VARIABLE and (Monthly Once OR Yearly).
-      const fixedGroup = activeDisplayConfigs.filter(c => c.type === 'FIXED');
-      const variableGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && c.period !== 'MONTHLY_ONCE' && c.period !== 'YEARLY');
-      const oneTimeGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY'));
+      // REVISED GROUPING LOGIC
+      // 1. One Time Group: Explicitly 'MONTHLY_ONCE' or 'YEARLY' period, regardless of Type
+      const isOneTime = (c: CategoryBudgetConfig) => c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE';
+      
+      // 2. Variable Group: Variable type AND NOT OneTime
+      // 3. Fixed Group: Fixed type AND NOT OneTime
+      const oneTimeGroup = activeDisplayConfigs.filter(c => isOneTime(c));
+      const fixedGroup = activeDisplayConfigs.filter(c => c.type === 'FIXED' && !isOneTime(c));
+      const variableGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && !isOneTime(c));
 
       const totalFixedBudget = fixedGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
       const totalVariableBudget = variableGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
       const totalOneTimeBudget = oneTimeGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
       
       const totalAllocated = totalFixedBudget + totalVariableBudget + totalOneTimeBudget;
-      const unallocated = totalIncome - totalSavings - totalAllocated;
-
+      
       const relevantTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
       const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
+
+      const netDeviation = totalAllocated - totalSpent;
+      const isPositiveDeviation = netDeviation >= 0;
 
       return (
           <div className="space-y-6 animate-in fade-in">
@@ -571,13 +577,21 @@ export const Planning: React.FC = () => {
                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Actual Spent</p>
                         <h3 className={`text-3xl font-black ${totalSpent > totalAllocated ? 'text-rose-500' : 'text-emerald-400'}`}>{formatMoney(totalSpent)}</h3>
                     </div>
-                    <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Unallocated Buffer</p>
-                        <h3 className={`text-3xl font-black ${unallocated < 0 ? 'text-rose-500' : 'text-blue-400'}`}>{formatMoney(unallocated)}</h3>
+                    {/* UPDATED KPI CARD: Net Deviation */}
+                    <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-4 opacity-10">
+                            <Activity size={48} className={isPositiveDeviation ? 'text-emerald-500' : 'text-rose-500'} />
+                        </div>
+                        <p className="text-xs text-slate-500 font-bold uppercase mb-1">Net Deviation</p>
+                        <h3 className={`text-3xl font-black ${isPositiveDeviation ? 'text-emerald-400' : 'text-rose-500'}`}>
+                            {isPositiveDeviation ? '+' : ''}{formatMoney(netDeviation)}
+                        </h3>
+                        <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${isPositiveDeviation ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {isPositiveDeviation ? 'Under Budget' : 'Over Budget'}
+                        </p>
                     </div>
                </div>
 
-               {/* GRID LAYOUT: Variable (Left), Stacked Fixed & One-Time (Right) */}
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                     
                     {/* COL 1: VARIABLE (Full Height) */}
@@ -610,11 +624,11 @@ export const Planning: React.FC = () => {
                         <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
                             <div className="p-4 border-b border-slate-800 bg-slate-900/50">
                                 <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div> One-Time Payments
+                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div> One-Time & Annual
                                 </h3>
                             </div>
                             <div className="p-6">
-                                {renderDashboardConfigSection(oneTimeGroup, relevantTxs, budgetMultiplier)}
+                                {renderOneTimeSection(oneTimeGroup, relevantTxs, budgetMultiplier)}
                                 {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No one-time rules set.</div>}
                             </div>
                         </div>
