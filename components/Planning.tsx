@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
@@ -33,6 +32,36 @@ export const Planning: React.FC = () => {
 
   const DAYS_IN_MONTH = 30; 
   const MONTHS_IN_YEAR = 12;
+
+  // --- DATE HELPERS (ROBUST LOCAL TIME) ---
+  const getLocalMidnight = (d: Date) => {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+
+  const parseDateString = (s: string | undefined) => {
+      if(!s) return null;
+      const [y, m, d] = s.split('-').map(Number);
+      return new Date(y, m - 1, d); // Construct as Local 00:00:00
+  };
+
+  const getDaysDiff = (targetDateStr: string | undefined): number | '' => {
+      const target = parseDateString(targetDateStr);
+      if (!target) return '';
+      const now = getLocalMidnight(new Date());
+      // Difference in days, rounded to handle potential DST shifts safely, though midnight-to-midnight is usually safe
+      const diffMs = target.getTime() - now.getTime();
+      return Math.round(diffMs / (1000 * 60 * 60 * 24));
+  };
+
+  const addDaysToToday = (days: number): string => {
+      const d = getLocalMidnight(new Date());
+      d.setDate(d.getDate() + days);
+      // Return YYYY-MM-DD
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+  };
 
   // 1. Data Loading (Pure Data Fetching, No UI State Side Effects)
   const loadData = () => {
@@ -380,7 +409,7 @@ export const Planning: React.FC = () => {
                                 <span className="text-[9px] text-slate-500 mr-1">Every</span>
                                 <input 
                                     type="number" 
-                                    className="w-6 bg-transparent text-[9px] text-white outline-none font-bold text-center"
+                                    className="w-14 bg-transparent text-[9px] text-white outline-none font-bold text-center"
                                     value={conf.customFrequencyDays || 30}
                                     onChange={(e) => handleConfigChange(conf.categoryId, 'customFrequencyDays', parseFloat(e.target.value))}
                                 />
@@ -441,13 +470,11 @@ export const Planning: React.FC = () => {
                             type="number"
                             className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-indigo-500/50 text-center"
                             placeholder="-"
-                            value={conf.renewalDate ? Math.ceil((new Date(conf.renewalDate).setHours(23,59,59,999) - new Date().getTime()) / (86400000)) : ''}
+                            value={getDaysDiff(conf.renewalDate)}
                             onChange={(e) => {
                                 const val = parseInt(e.target.value);
                                 if (!isNaN(val)) {
-                                    const d = new Date();
-                                    d.setDate(d.getDate() + val);
-                                    handleConfigChange(conf.categoryId, 'renewalDate', d.toISOString().split('T')[0]);
+                                    handleConfigChange(conf.categoryId, 'renewalDate', addDaysToToday(val));
                                 }
                             }}
                           />
@@ -505,12 +532,13 @@ export const Planning: React.FC = () => {
       );
   };
 
-  const addDuration = (date: Date, c: CategoryBudgetConfig) => {
-      const d = new Date(date);
-      if (c.period === 'YEARLY') d.setFullYear(d.getFullYear() + 1);
-      else if (c.period === 'MONTHLY_ONCE' || c.period === 'MONTHLY_NET') d.setMonth(d.getMonth() + 1);
-      else if (c.period === 'DAILY') d.setDate(d.getDate() + 1);
-      else d.setDate(d.getDate() + (c.customFrequencyDays || 30));
+  const getStartDateFromExpiry = (expiryDate: Date, c: CategoryBudgetConfig) => {
+      // Logic: Start Date = Expiry Date - Duration
+      const d = getLocalMidnight(expiryDate);
+      if (c.period === 'YEARLY') d.setFullYear(d.getFullYear() - 1);
+      else if (c.period === 'MONTHLY_ONCE' || c.period === 'MONTHLY_NET') d.setMonth(d.getMonth() - 1);
+      else if (c.period === 'DAILY') d.setDate(d.getDate() - 1);
+      else d.setDate(d.getDate() - (c.customFrequencyDays || 30));
       return d;
   };
 
@@ -522,65 +550,47 @@ export const Planning: React.FC = () => {
             {configs.map(conf => {
                 const cat = categories.find(c => c.id === conf.categoryId);
                 const fullCost = conf.allocatedAmount;
-                const today = new Date();
+                const today = getLocalMidnight(new Date());
 
-                // 1. Find Last Payment (PREPAID MODEL)
-                // We must use global transactions, not just the filtered view
-                const lastPayment = transactions
-                    .filter(t => t.categoryId === conf.categoryId && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'))
-                    .sort((a,b) => b.date.localeCompare(a.date))[0];
-
-                let startDate: Date;
-                let endDate: Date;
-                let status: 'ACTIVE' | 'EXPIRED' | 'OVERDUE' | 'SCHEDULED' | 'SETUP';
-                let daysText = '';
+                let expiryDate: Date | null = null;
+                let startDate: Date | null = null;
+                let status: 'ACTIVE' | 'EXPIRED' | 'SETUP' = 'SETUP';
                 let progressPct = 0;
+                let daysLeftText = '';
+                let dateDisplay = '';
 
-                if (lastPayment) {
-                    startDate = new Date(lastPayment.date);
-                    endDate = addDuration(startDate, conf);
+                // STRICT LOGIC: Source of Truth is Plan Configuration (renewalDate)
+                if (conf.renewalDate) {
+                    expiryDate = parseDateString(conf.renewalDate); // Local 00:00
                     
-                    if (today <= endDate) {
-                        status = 'ACTIVE';
-                        const totalDuration = endDate.getTime() - startDate.getTime();
-                        const elapsed = today.getTime() - startDate.getTime();
-                        progressPct = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
-                        const daysLeft = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                        daysText = `${daysLeft} Days Remaining`;
-                    } else {
-                        status = 'EXPIRED';
-                        progressPct = 100;
-                        const daysAgo = Math.ceil((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
-                        daysText = `Expired ${daysAgo} days ago`;
-                    }
-                } else {
-                    // Fallback to manual date
-                    if (conf.renewalDate) {
-                        const plannedStart = new Date(conf.renewalDate);
-                        startDate = plannedStart;
-                        // For display, if overdue, we show it relative to when it SHOULD have been paid
-                        endDate = addDuration(plannedStart, conf); 
-
-                        if (today < plannedStart) {
-                             status = 'SCHEDULED';
-                             daysText = `Starts ${plannedStart.toLocaleDateString()}`;
+                    if (expiryDate) {
+                        const daysDiff = Math.round((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        
+                        startDate = getStartDateFromExpiry(expiryDate, conf);
+                        
+                        // STRICT: Status is based ONLY on daysDiff
+                        if (daysDiff >= 0) {
+                            status = 'ACTIVE';
+                            daysLeftText = daysDiff === 0 ? 'Expires Today' : `${daysDiff} Days Left`;
+                            
+                            // Progress Bar Logic
+                            // How much time has passed since the calculated Start Date?
+                            const totalDuration = expiryDate.getTime() - startDate.getTime();
+                            const elapsed = today.getTime() - startDate.getTime();
+                            // Clamp progress between 0 and 100
+                            progressPct = totalDuration > 0 ? Math.min(100, Math.max(0, (elapsed / totalDuration) * 100)) : 0;
                         } else {
-                             status = 'OVERDUE';
-                             daysText = `First payment was due ${plannedStart.toLocaleDateString()}`;
+                            status = 'EXPIRED';
+                            daysLeftText = `Expired ${Math.abs(daysDiff)} days ago`;
+                            progressPct = 100;
                         }
-                    } else {
-                        status = 'SETUP';
-                        startDate = today;
-                        endDate = today;
-                        daysText = "Set first due date";
+                        
+                        dateDisplay = expiryDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                     }
                 }
 
-                const visualStartDate = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                const visualEndDate = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
                 return (
-                    <div key={conf.categoryId} className={`p-4 rounded-xl border relative overflow-hidden transition-all ${status === 'ACTIVE' ? 'bg-emerald-500/5 border-emerald-500/30' : status === 'EXPIRED' || status === 'OVERDUE' ? 'bg-rose-500/5 border-rose-500/30' : 'bg-slate-900/40 border-slate-800'}`}>
+                    <div key={conf.categoryId} className={`p-4 rounded-xl border relative overflow-hidden transition-all ${status === 'ACTIVE' ? 'bg-emerald-500/5 border-emerald-500/30' : status === 'EXPIRED' ? 'bg-rose-500/5 border-rose-500/30' : 'bg-slate-900/40 border-slate-800'}`}>
                         <div className="flex justify-between items-start mb-2">
                             <div className="flex items-center gap-3">
                                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${status === 'ACTIVE' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
@@ -595,17 +605,20 @@ export const Planning: React.FC = () => {
                             </div>
                             <div className="text-right">
                                 <p className="font-mono font-bold text-white text-lg">{formatMoney(fullCost)}</p>
-                                <p className={`text-[10px] font-bold uppercase ${status === 'ACTIVE' ? 'text-emerald-500' : status === 'EXPIRED' ? 'text-rose-500' : 'text-slate-500'}`}>
-                                    {status}
-                                </p>
                             </div>
                         </div>
                         
                         {/* Validity Bar */}
                         <div className="mt-3 pt-3 border-t border-slate-800/50 space-y-2">
                             <div className="flex justify-between items-center text-[10px] font-mono text-slate-500">
-                                <span>{lastPayment ? 'Paid: ' : 'Start: '}{visualStartDate}</span>
-                                <span className={status === 'EXPIRED' || status === 'OVERDUE' ? 'text-rose-400 font-bold' : ''}>{lastPayment ? 'Valid Until: ' : 'Due: '}{visualEndDate}</span>
+                                <span className={status === 'ACTIVE' ? 'text-emerald-500 font-bold' : status === 'EXPIRED' ? 'text-rose-500 font-bold' : ''}>
+                                    {status === 'SETUP' ? 'SET EXPIRY' : status}
+                                </span>
+                                {status !== 'SETUP' && (
+                                    <span className={status === 'EXPIRED' ? 'text-rose-400 font-bold' : ''}>
+                                        {status === 'ACTIVE' ? 'Valid Until:' : 'Expired:'} {dateDisplay}
+                                    </span>
+                                )}
                             </div>
                             
                             <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden relative">
@@ -618,8 +631,8 @@ export const Planning: React.FC = () => {
                             <div className="flex justify-between items-center">
                                 <div className="flex items-center gap-1.5">
                                     {status === 'ACTIVE' ? <Clock size={10} className="text-emerald-500" /> : <AlertCircle size={10} className="text-rose-500" />}
-                                    <span className={`text-[10px] font-bold ${status === 'ACTIVE' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                        {daysText}
+                                    <span className={`text-[10px] font-bold ${status === 'ACTIVE' ? 'text-emerald-500' : status === 'EXPIRED' ? 'text-rose-500' : 'text-slate-500'}`}>
+                                        {status === 'SETUP' ? 'No date configured' : daysLeftText}
                                     </span>
                                 </div>
                                 {status === 'ACTIVE' && <span className="text-[9px] text-slate-600 uppercase tracking-wider">{Math.round(progressPct)}% Consumed</span>}
