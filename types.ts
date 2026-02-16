@@ -1,4 +1,5 @@
 
+
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'INVESTMENT';
 
 export interface User {
@@ -82,9 +83,11 @@ export interface FixedCostItem {
 
 export interface CategoryBudgetConfig {
     categoryId: string;
-    type: 'FIXED' | 'VARIABLE' | 'IGNORE';
-    allocatedAmount: number; // ALWAYS stored as Monthly equivalent for math consistency
-    period: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY'; // UI state for input preference
+    type: 'FIXED' | 'VARIABLE' | 'IGNORE' | 'SUBSCRIPTION'; // Added SUBSCRIPTION
+    allocatedAmount: number; // For SUBSCRIPTION and YEARLY, this is the FULL cost. For others, it's monthly.
+    period: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY' | 'CUSTOM'; 
+    customFrequencyDays?: number; // New: For "Every X Days" (SIPs, etc)
+    renewalDate?: string; // New: For tracking subscriptions
 }
 
 export interface BudgetTemplate {

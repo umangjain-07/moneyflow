@@ -1,8 +1,9 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
-import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight, Circle, Activity } from 'lucide-react';
+import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight, Circle, Activity, RefreshCw, AlertCircle } from 'lucide-react';
 
 export const Planning: React.FC = () => {
   const [settings, setSettings] = useState(db.getSettings());
@@ -121,24 +122,40 @@ export const Planning: React.FC = () => {
   }, [selectedTemplateId, plan, categories.length]); 
 
   const calculateProjection = (template: BudgetTemplate | null) => {
-      if (!template) return { income: 0, fixed: 0, variable: 0, oneTime: 0, savings: 0, balance: 0 };
+      if (!template) return { income: 0, fixed: 0, variable: 0, oneTime: 0, subscription: 0, savings: 0, balance: 0 };
       
       const income = template.salary;
       const savings = template.savingsGoal;
       
-      let fixed = 0, variable = 0, oneTime = 0;
+      let fixed = 0, variable = 0, oneTime = 0, subscription = 0;
       
       template.configs.forEach(c => {
           if (c.type === 'IGNORE') return;
 
-          const monthlyAmount = c.period === 'DAILY' ? c.allocatedAmount * 30 :
-                                c.period === 'YEARLY' ? c.allocatedAmount / 12 :
-                                c.allocatedAmount;
+          // Normalize to Monthly for the Projection Summary
+          let monthlyAmount = c.allocatedAmount;
 
-          if (c.type === 'FIXED') {
+          if (c.type === 'SUBSCRIPTION' || c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE' || c.period === 'CUSTOM') {
+              // For these types, allocatedAmount is the FULL cost per cycle.
+              if (c.period === 'YEARLY') {
+                  monthlyAmount = c.allocatedAmount / 12;
+              } else if (c.period === 'CUSTOM') {
+                  // e.g. every 15 days -> amount * (30/15) = monthly
+                  const days = c.customFrequencyDays || 30;
+                  monthlyAmount = (c.allocatedAmount / Math.max(1, days)) * 30;
+              }
+              // For MONTHLY_ONCE, amount is already monthly
+          } else {
+              // Standard behavior for other types
+              if (c.period === 'DAILY') monthlyAmount = c.allocatedAmount * 30;
+          }
+
+          if (c.type === 'SUBSCRIPTION') {
+              subscription += monthlyAmount;
+          } else if (c.type === 'FIXED') {
               fixed += monthlyAmount;
           } else if (c.type === 'VARIABLE') {
-              if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY') {
+              if (c.period === 'MONTHLY_ONCE' || c.period === 'YEARLY' || c.period === 'CUSTOM') {
                   oneTime += monthlyAmount;
               } else {
                   variable += monthlyAmount;
@@ -151,8 +168,9 @@ export const Planning: React.FC = () => {
           fixed,
           variable,
           oneTime,
+          subscription,
           savings,
-          balance: income - savings - fixed - variable - oneTime
+          balance: income - savings - fixed - variable - oneTime - subscription
       };
   };
 
@@ -290,7 +308,14 @@ export const Planning: React.FC = () => {
     if(!conf) return;
     const next = conf.period === 'DAILY' ? 'MONTHLY_NET' :
                  conf.period === 'MONTHLY_NET' ? 'MONTHLY_ONCE' :
-                 conf.period === 'MONTHLY_ONCE' ? 'YEARLY' : 'DAILY';
+                 conf.period === 'MONTHLY_ONCE' ? 'YEARLY' : 
+                 conf.period === 'YEARLY' ? 'CUSTOM' : 'DAILY';
+    
+    // Default custom days to 30 if switching to CUSTOM
+    if (next === 'CUSTOM' && !conf.customFrequencyDays) {
+        handleConfigChange(catId, 'customFrequencyDays', 30);
+    }
+    
     handleConfigChange(catId, 'period', next);
   };
 
@@ -330,49 +355,105 @@ export const Planning: React.FC = () => {
   const renderConfigRow = (conf: CategoryBudgetConfig) => {
       const cat = categories.find(c => c.id === conf.categoryId);
       if (!cat) return null;
-      const displayValue = conf.period === 'DAILY' ? conf.allocatedAmount / DAYS_IN_MONTH :
-                           conf.period === 'YEARLY' ? conf.allocatedAmount * MONTHS_IN_YEAR : conf.allocatedAmount;
+      
       const isIgnored = conf.type === 'IGNORE';
+      
+      // LOGIC CHANGE: For Subscriptions, Yearly, and Custom items, we always display and edit the FULL COST.
+      // We do not divide it by 12 or 30 in the input field.
+      const isFullCostType = conf.type === 'SUBSCRIPTION' || conf.period === 'YEARLY' || conf.period === 'MONTHLY_ONCE' || conf.period === 'CUSTOM';
+      
+      let displayValue = conf.allocatedAmount; // Default to raw stored value
+      if (!isFullCostType) {
+          if (conf.period === 'DAILY') displayValue = conf.allocatedAmount / 30;
+      }
 
       return (
-          <div key={conf.categoryId} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${isIgnored ? 'bg-slate-950/30 border-slate-800/50 opacity-60' : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'}`}>
-              <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-lg">{cat.icon}</div>
-              <div className="flex-1 min-w-0">
-                  <p className={`font-bold text-sm truncate ${isIgnored ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{cat.name}</p>
-                  <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
+          <div key={conf.categoryId} className={`flex flex-col gap-2 p-3 rounded-xl border transition-colors ${isIgnored ? 'bg-slate-950/30 border-slate-800/50 opacity-60' : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-lg">{cat.icon}</div>
+                <div className="flex-1 min-w-0">
+                    <p className={`font-bold text-sm truncate ${isIgnored ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{cat.name}</p>
+                    <div className="flex items-center gap-2">
+                        <p className="text-[10px] text-slate-500">{conf.period.replace(/_/g, ' ')}</p>
+                        {conf.period === 'CUSTOM' && (
+                            <div className="flex items-center bg-slate-950 rounded px-1 border border-slate-800">
+                                <span className="text-[9px] text-slate-500 mr-1">Every</span>
+                                <input 
+                                    type="number" 
+                                    className="w-6 bg-transparent text-[9px] text-white outline-none font-bold text-center"
+                                    value={conf.customFrequencyDays || 30}
+                                    onChange={(e) => handleConfigChange(conf.categoryId, 'customFrequencyDays', parseFloat(e.target.value))}
+                                />
+                                <span className="text-[9px] text-slate-500 ml-1">Days</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                    {(['FIXED', 'VARIABLE', 'SUBSCRIPTION', 'IGNORE'] as const).map(t => (
+                        <button 
+                            key={t}
+                            onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
+                            className={`px-2 py-1 rounded-md text-[9px] font-bold ${
+                                conf.type === t 
+                                ? (t==='FIXED' ? 'bg-rose-500 text-white' : t==='VARIABLE' ? 'bg-blue-500 text-white' : t==='SUBSCRIPTION' ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-300') 
+                                : 'text-slate-600'
+                            }`}
+                        >
+                            {t === 'IGNORE' ? 'SKIP' : t === 'SUBSCRIPTION' ? 'SUB' : t[0]}
+                        </button>
+                    ))}
+                </div>
+                <div className={`flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 ${isIgnored ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <input 
+                        type="number" 
+                        value={displayValue} 
+                        onChange={(e) => {
+                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                            // If it's a full cost type, store exactly what is typed.
+                            // If it's daily, store monthly equivalent.
+                            const final = (!isFullCostType && conf.period === 'DAILY') ? val * 30 : val;
+                            handleConfigChange(conf.categoryId, 'allocatedAmount', final);
+                        }}
+                        className="w-full bg-transparent text-xs text-right text-white outline-none py-1.5 font-bold"
+                        placeholder="0"
+                    />
+                </div>
+                <button onClick={() => handlePeriodToggle(conf.categoryId)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">
+                    <Repeat size={14} />
+                </button>
               </div>
-              <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
-                  {(['FIXED', 'VARIABLE', 'IGNORE'] as const).map(t => (
-                      <button 
-                        key={t}
-                        onClick={() => handleConfigChange(conf.categoryId, 'type', t)}
-                        className={`px-2 py-1 rounded-md text-[9px] font-bold ${
-                            conf.type === t 
-                            ? (t==='FIXED' ? 'bg-rose-500 text-white' : t==='VARIABLE' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-300') 
-                            : 'text-slate-600'
-                        }`}
-                      >
-                          {t === 'IGNORE' ? 'SKIP' : t[0]}
-                      </button>
-                  ))}
-              </div>
-              <div className={`flex items-center w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 ${isIgnored ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <input 
-                    type="number" 
-                    value={displayValue} 
-                    onChange={(e) => {
-                        const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                        const final = conf.period === 'DAILY' ? val * DAYS_IN_MONTH : 
-                                      conf.period === 'YEARLY' ? val / MONTHS_IN_YEAR : val;
-                        handleConfigChange(conf.categoryId, 'allocatedAmount', final);
-                    }}
-                    className="w-full bg-transparent text-xs text-right text-white outline-none py-1.5"
-                    placeholder="0"
-                  />
-              </div>
-              <button onClick={() => handlePeriodToggle(conf.categoryId)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">
-                  <Repeat size={14} />
-              </button>
+              
+              {conf.type === 'SUBSCRIPTION' && (
+                  <div className="flex flex-wrap items-center gap-4 pl-11 pt-2 animate-in slide-in-from-top-1">
+                      <div className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase">Expires On</span>
+                          <input 
+                            type="date" 
+                            className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-indigo-500/50"
+                            value={conf.renewalDate || ''}
+                            onChange={(e) => handleConfigChange(conf.categoryId, 'renewalDate', e.target.value)}
+                          />
+                      </div>
+                      <div className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase">Days Left</span>
+                          <input 
+                            type="number"
+                            className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-indigo-500/50 text-center"
+                            placeholder="-"
+                            value={conf.renewalDate ? Math.ceil((new Date(conf.renewalDate).setHours(23,59,59,999) - new Date().getTime()) / (86400000)) : ''}
+                            onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                if (!isNaN(val)) {
+                                    const d = new Date();
+                                    d.setDate(d.getDate() + val);
+                                    handleConfigChange(conf.categoryId, 'renewalDate', d.toISOString().split('T')[0]);
+                                }
+                            }}
+                          />
+                      </div>
+                  </div>
+              )}
           </div>
       );
   };
@@ -385,7 +466,18 @@ export const Planning: React.FC = () => {
                  {configs.map(conf => {
                     const cat = categories.find(c => c.id === conf.categoryId);
                     const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
-                    const target = conf.allocatedAmount * multiplier;
+                    
+                    // For standard sections, use multiplier logic
+                    let target = conf.allocatedAmount * multiplier;
+                    
+                    // For custom periods in dashboard view, approximate if needed
+                    if (conf.period === 'CUSTOM') {
+                        // Normalize to monthly then apply multiplier
+                        const days = conf.customFrequencyDays || 30;
+                        const monthly = (conf.allocatedAmount / days) * 30;
+                        target = monthly * multiplier;
+                    }
+
                     const pct = target > 0 ? Math.min(100, (spent / target) * 100) : (spent > 0 ? 100 : 0);
                     const isOver = spent > target;
                     const isExact = Math.abs(spent - target) < 1; 
@@ -413,7 +505,134 @@ export const Planning: React.FC = () => {
       );
   };
 
-  const renderOneTimeSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[], multiplier: number) => {
+  const addDuration = (date: Date, c: CategoryBudgetConfig) => {
+      const d = new Date(date);
+      if (c.period === 'YEARLY') d.setFullYear(d.getFullYear() + 1);
+      else if (c.period === 'MONTHLY_ONCE' || c.period === 'MONTHLY_NET') d.setMonth(d.getMonth() + 1);
+      else if (c.period === 'DAILY') d.setDate(d.getDate() + 1);
+      else d.setDate(d.getDate() + (c.customFrequencyDays || 30));
+      return d;
+  };
+
+  const renderSubscriptionSection = (configs: CategoryBudgetConfig[]) => {
+    if (configs.length === 0) return null;
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {configs.map(conf => {
+                const cat = categories.find(c => c.id === conf.categoryId);
+                const fullCost = conf.allocatedAmount;
+                const today = new Date();
+
+                // 1. Find Last Payment (PREPAID MODEL)
+                // We must use global transactions, not just the filtered view
+                const lastPayment = transactions
+                    .filter(t => t.categoryId === conf.categoryId && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'))
+                    .sort((a,b) => b.date.localeCompare(a.date))[0];
+
+                let startDate: Date;
+                let endDate: Date;
+                let status: 'ACTIVE' | 'EXPIRED' | 'OVERDUE' | 'SCHEDULED' | 'SETUP';
+                let daysText = '';
+                let progressPct = 0;
+
+                if (lastPayment) {
+                    startDate = new Date(lastPayment.date);
+                    endDate = addDuration(startDate, conf);
+                    
+                    if (today <= endDate) {
+                        status = 'ACTIVE';
+                        const totalDuration = endDate.getTime() - startDate.getTime();
+                        const elapsed = today.getTime() - startDate.getTime();
+                        progressPct = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
+                        const daysLeft = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        daysText = `${daysLeft} Days Remaining`;
+                    } else {
+                        status = 'EXPIRED';
+                        progressPct = 100;
+                        const daysAgo = Math.ceil((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
+                        daysText = `Expired ${daysAgo} days ago`;
+                    }
+                } else {
+                    // Fallback to manual date
+                    if (conf.renewalDate) {
+                        const plannedStart = new Date(conf.renewalDate);
+                        startDate = plannedStart;
+                        // For display, if overdue, we show it relative to when it SHOULD have been paid
+                        endDate = addDuration(plannedStart, conf); 
+
+                        if (today < plannedStart) {
+                             status = 'SCHEDULED';
+                             daysText = `Starts ${plannedStart.toLocaleDateString()}`;
+                        } else {
+                             status = 'OVERDUE';
+                             daysText = `First payment was due ${plannedStart.toLocaleDateString()}`;
+                        }
+                    } else {
+                        status = 'SETUP';
+                        startDate = today;
+                        endDate = today;
+                        daysText = "Set first due date";
+                    }
+                }
+
+                const visualStartDate = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const visualEndDate = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+                return (
+                    <div key={conf.categoryId} className={`p-4 rounded-xl border relative overflow-hidden transition-all ${status === 'ACTIVE' ? 'bg-emerald-500/5 border-emerald-500/30' : status === 'EXPIRED' || status === 'OVERDUE' ? 'bg-rose-500/5 border-rose-500/30' : 'bg-slate-900/40 border-slate-800'}`}>
+                        <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${status === 'ACTIVE' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                                    {status === 'ACTIVE' ? <Check size={20} strokeWidth={4} /> : <RefreshCw size={18} />}
+                                </div>
+                                <div>
+                                    <p className="font-bold text-slate-200">{cat?.name}</p>
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                                        {conf.period === 'CUSTOM' ? `Prepaid ${conf.customFrequencyDays} Days` : `Prepaid ${conf.period.replace('_', ' ')}`}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <p className="font-mono font-bold text-white text-lg">{formatMoney(fullCost)}</p>
+                                <p className={`text-[10px] font-bold uppercase ${status === 'ACTIVE' ? 'text-emerald-500' : status === 'EXPIRED' ? 'text-rose-500' : 'text-slate-500'}`}>
+                                    {status}
+                                </p>
+                            </div>
+                        </div>
+                        
+                        {/* Validity Bar */}
+                        <div className="mt-3 pt-3 border-t border-slate-800/50 space-y-2">
+                            <div className="flex justify-between items-center text-[10px] font-mono text-slate-500">
+                                <span>{lastPayment ? 'Paid: ' : 'Start: '}{visualStartDate}</span>
+                                <span className={status === 'EXPIRED' || status === 'OVERDUE' ? 'text-rose-400 font-bold' : ''}>{lastPayment ? 'Valid Until: ' : 'Due: '}{visualEndDate}</span>
+                            </div>
+                            
+                            <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden relative">
+                                <div 
+                                    className={`h-full rounded-full transition-all duration-500 ${status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                                    style={{ width: `${progressPct}%` }}
+                                ></div>
+                            </div>
+
+                            <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-1.5">
+                                    {status === 'ACTIVE' ? <Clock size={10} className="text-emerald-500" /> : <AlertCircle size={10} className="text-rose-500" />}
+                                    <span className={`text-[10px] font-bold ${status === 'ACTIVE' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                        {daysText}
+                                    </span>
+                                </div>
+                                {status === 'ACTIVE' && <span className="text-[9px] text-slate-600 uppercase tracking-wider">{Math.round(progressPct)}% Consumed</span>}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+  };
+
+  const renderOneTimeSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[]) => {
     if (configs.length === 0) return null;
 
     return (
@@ -421,7 +640,9 @@ export const Planning: React.FC = () => {
             {configs.map(conf => {
                 const cat = categories.find(c => c.id === conf.categoryId);
                 const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
-                const target = conf.allocatedAmount * multiplier;
+                
+                // Show FULL COST always for Yearly/One-Time
+                const target = conf.allocatedAmount; 
                 const isPaid = spent > 0;
 
                 return (
@@ -490,34 +711,37 @@ export const Planning: React.FC = () => {
       }
 
       const monthlyIncome = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.salary || plan.salary;
-      const monthlySavings = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.savingsGoal || plan.savingsGoal;
+      // const monthlySavings = plan.budgetTemplates?.find(t => t.id === planMeta.id)?.savingsGoal || plan.savingsGoal;
       
-      const totalIncome = monthlyIncome * budgetMultiplier;
-      const totalSavings = monthlySavings * budgetMultiplier;
-      
-      const activeDisplayConfigs = activeConfigs.filter(c => c.type !== 'IGNORE');
-      
-      // REVISED GROUPING LOGIC
-      // 1. One Time Group: Explicitly 'MONTHLY_ONCE' or 'YEARLY' period, regardless of Type
-      const isOneTime = (c: CategoryBudgetConfig) => c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE';
-      
-      // 2. Variable Group: Variable type AND NOT OneTime
-      // 3. Fixed Group: Fixed type AND NOT OneTime
-      const oneTimeGroup = activeDisplayConfigs.filter(c => isOneTime(c));
-      const fixedGroup = activeDisplayConfigs.filter(c => c.type === 'FIXED' && !isOneTime(c));
-      const variableGroup = activeDisplayConfigs.filter(c => c.type === 'VARIABLE' && !isOneTime(c));
-
-      const totalFixedBudget = fixedGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
-      const totalVariableBudget = variableGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
-      const totalOneTimeBudget = oneTimeGroup.reduce((s, c) => s + c.allocatedAmount, 0) * budgetMultiplier;
-      
-      const totalAllocated = totalFixedBudget + totalVariableBudget + totalOneTimeBudget;
+      // Calculate Total Allocated (Approximation for the Budget card)
+      // This is complex because Subs/OneTime are full cost, others are monthly * multiplier
+      let totalAllocated = 0;
+      activeConfigs.filter(c => c.type !== 'IGNORE').forEach(c => {
+          if (c.type === 'SUBSCRIPTION' || c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE' || c.period === 'CUSTOM') {
+              // Approximate monthly load for stats
+              let monthlyLoad = c.allocatedAmount;
+              if (c.period === 'YEARLY') monthlyLoad = c.allocatedAmount / 12;
+              if (c.period === 'CUSTOM') monthlyLoad = (c.allocatedAmount / (c.customFrequencyDays||30)) * 30;
+              
+              totalAllocated += monthlyLoad * budgetMultiplier;
+          } else {
+              totalAllocated += c.allocatedAmount * budgetMultiplier;
+          }
+      });
       
       const relevantTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
       const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
 
       const netDeviation = totalAllocated - totalSpent;
       const isPositiveDeviation = netDeviation >= 0;
+
+      // Grouping Logic
+      const isOneTime = (c: CategoryBudgetConfig) => c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE' || c.period === 'CUSTOM';
+      
+      const subGroup = activeConfigs.filter(c => c.type === 'SUBSCRIPTION');
+      const oneTimeGroup = activeConfigs.filter(c => isOneTime(c) && c.type !== 'SUBSCRIPTION'); // Exclude subs from one-time visual
+      const fixedGroup = activeConfigs.filter(c => c.type === 'FIXED' && !isOneTime(c));
+      const variableGroup = activeConfigs.filter(c => c.type === 'VARIABLE' && !isOneTime(c));
 
       return (
           <div className="space-y-6 animate-in fade-in">
@@ -592,6 +816,20 @@ export const Planning: React.FC = () => {
                     </div>
                </div>
 
+               {/* SUBSCRIPTIONS SECTION - Full Width */}
+               {subGroup.length > 0 && (
+                   <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                       <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                           <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                               <RefreshCw size={16} className="text-indigo-400" /> Active Subscriptions
+                           </h3>
+                       </div>
+                       <div className="p-6">
+                           {renderSubscriptionSection(subGroup)}
+                       </div>
+                   </div>
+               )}
+
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                     
                     {/* COL 1: VARIABLE (Full Height) */}
@@ -628,7 +866,7 @@ export const Planning: React.FC = () => {
                                 </h3>
                             </div>
                             <div className="p-6">
-                                {renderOneTimeSection(oneTimeGroup, relevantTxs, budgetMultiplier)}
+                                {renderOneTimeSection(oneTimeGroup, relevantTxs)}
                                 {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No one-time rules set.</div>}
                             </div>
                         </div>
@@ -643,6 +881,7 @@ export const Planning: React.FC = () => {
       // Keep edit order simple for better UX
       const fixedConfigs = allConfigs.filter(c => c.type === 'FIXED');
       const varConfigs = allConfigs.filter(c => c.type === 'VARIABLE');
+      const subConfigs = allConfigs.filter(c => c.type === 'SUBSCRIPTION');
       const ignoredConfigs = allConfigs.filter(c => c.type === 'IGNORE');
 
       // DYNAMIC TIMELINE GENERATION
@@ -800,6 +1039,11 @@ export const Planning: React.FC = () => {
                             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                                 <div className="space-y-6">
                                     <div>
+                                        <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-3 flex items-center gap-2"><RefreshCw size={12}/> Subscriptions</h4>
+                                        <div className="space-y-2">{subConfigs.map(renderConfigRow)}</div>
+                                        {subConfigs.length === 0 && <p className="text-xs text-slate-600 italic">No subscriptions configured.</p>}
+                                    </div>
+                                    <div>
                                         <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Lock size={12}/> Fixed Costs</h4>
                                         <div className="space-y-2">{fixedConfigs.map(renderConfigRow)}</div>
                                     </div>
@@ -844,6 +1088,10 @@ export const Planning: React.FC = () => {
                                     <span className="font-mono text-rose-400">{formatMoney(projection.fixed)}</span>
                                 </div>
                                 <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500">Subscriptions</span>
+                                    <span className="font-mono text-indigo-400">{formatMoney(projection.subscription)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
                                     <span className="text-slate-500">Variable Est.</span>
                                     <span className="font-mono text-blue-400">{formatMoney(projection.variable)}</span>
                                 </div>
@@ -870,7 +1118,7 @@ export const Planning: React.FC = () => {
                             {/* Status Bar */}
                             <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden flex">
                                 <div className="bg-rose-500" style={{width: `${Math.min(100, (projection.fixed/Math.max(1, projection.income))*100)}%`}} title="Fixed"></div>
-                                <div className="bg-purple-500" style={{width: `${Math.min(100, (projection.oneTime/Math.max(1, projection.income))*100)}%`}} title="OneTime"></div>
+                                <div className="bg-indigo-500" style={{width: `${Math.min(100, (projection.subscription/Math.max(1, projection.income))*100)}%`}} title="Subscriptions"></div>
                                 <div className="bg-blue-500" style={{width: `${Math.min(100, (projection.variable/Math.max(1, projection.income))*100)}%`}} title="Variable"></div>
                                 <div className="bg-emerald-500" style={{width: `${Math.min(100, (projection.savings/Math.max(1, projection.income))*100)}%`}} title="Savings"></div>
                             </div>
