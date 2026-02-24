@@ -11,7 +11,7 @@ import { Reports } from './components/Reports';
 import { Planning } from './components/Planning';
 import { Auth } from './components/Auth';
 import { db, subscribe } from './services/storage';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 
 interface ErrorBoundaryProps {
   children?: ReactNode;
@@ -85,14 +85,27 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
 const AppContent: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(db.isLoggedIn());
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
+    // Wait for DB init
+    db.initPromise.then(() => setIsReady(true));
+
     // Listen for login/logout events to update UI immediately
     const unsubscribe = subscribe(() => {
       setIsAuthenticated(db.isLoggedIn());
     });
     return () => unsubscribe();
   }, []);
+
+  if (!isReady) {
+    return (
+        <div className="min-h-screen bg-[#020617] flex items-center justify-center text-slate-400">
+            <Loader2 className="animate-spin mr-2" />
+            Loading Database...
+        </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <Auth />;
