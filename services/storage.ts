@@ -384,8 +384,9 @@ class StorageService {
         await this.pullFromCloud(); 
         
         // Update Profile from Google Data
+        // Use full email as username fallback if display name is missing
         const profile = { 
-            username: r.user.displayName || r.user.email?.split('@')[0] || 'User', 
+            username: r.user.displayName || r.user.email || 'User', 
             email: r.user.email, 
             photoURL: r.user.photoURL 
         };
@@ -423,7 +424,8 @@ class StorageService {
              // Ensure profile exists
              const currentProfile = this.get('profile', null);
              if (!currentProfile) {
-                 this.set('profile', { username: u.split('@')[0], email: email });
+                 // Use full email (or original username input) as username
+                 this.set('profile', { username: u, email: email });
              }
              
              return { success: true };
@@ -467,7 +469,8 @@ class StorageService {
              
              // Initialize default data for new user in cloud
              this.set('settings', DEFAULT_SETTINGS, true); 
-             this.set('profile', { username: u.split('@')[0], email: email }, true);
+             // Use full email/username
+             this.set('profile', { username: u, email: email }, true);
              
              await this.pushToCloud();
              return { success: true };
@@ -498,14 +501,15 @@ class StorageService {
   
   getCurrentUser() { 
       const session = this.getSession();
-      if (!session) return { username: 'Guest', id: '', photoURL: undefined };
+      if (!session) return { username: 'Guest', id: '', photoURL: undefined, email: undefined };
       
-      const profile = this.get('profile', { username: session, photoURL: undefined });
+      const profile = this.get('profile', { username: session, photoURL: undefined, email: undefined });
       // Fallback to session ID if username is missing in profile (legacy data)
       return { 
           username: profile.username || session, 
           id: session, 
-          photoURL: profile.photoURL as string | undefined 
+          photoURL: profile.photoURL as string | undefined,
+          email: profile.email as string | undefined
       }; 
   }
   getSettings() { return this.get<AppSettings>('settings', DEFAULT_SETTINGS); }

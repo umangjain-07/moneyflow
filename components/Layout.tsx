@@ -97,15 +97,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         <div className="p-4 border-t border-slate-800/50 space-y-3 bg-[#0B0E14]/50">
             <div className="flex items-center justify-between px-4 py-2 bg-slate-900/50 rounded-xl border border-slate-800/50">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-blue-500 p-[1px]">
+                <div className="flex items-center gap-2 overflow-hidden">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-blue-500 p-[1px] flex-shrink-0">
                          <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center overflow-hidden">
-                            {user?.photoURL ? <img src={user.photoURL} alt="u" className="w-full h-full object-cover"/> : <span className="font-bold text-xs">{user?.username.charAt(0).toUpperCase()}</span>}
+                            {user?.photoURL ? <img src={user.photoURL} alt="u" className="w-full h-full object-cover"/> : <span className="font-bold text-xs">{(user?.username || user?.email || 'U').charAt(0).toUpperCase()}</span>}
                          </div>
                     </div>
-                    <span className="text-sm text-slate-300 font-medium truncate max-w-[80px]">{user?.username}</span>
+                    <div className="flex flex-col overflow-hidden">
+                        <span className="text-sm text-slate-300 font-medium truncate" title={user?.username}>{user?.username}</span>
+                        {user?.email && user.email !== user.username && <span className="text-[10px] text-slate-500 truncate" title={user.email}>{user.email}</span>}
+                    </div>
                 </div>
-                <button onClick={() => db.logout()} className="text-slate-500 hover:text-rose-500 transition-colors p-1.5 hover:bg-rose-500/10 rounded-lg" title="Logout"><LogOut size={16} /></button>
+                <button onClick={() => db.logout()} className="text-slate-500 hover:text-rose-500 transition-colors p-1.5 hover:bg-rose-500/10 rounded-lg flex-shrink-0" title="Logout"><LogOut size={16} /></button>
             </div>
 
             <button 
