@@ -5,7 +5,7 @@ import { initializeApp } from 'firebase/app';
 // @ts-ignore
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 // @ts-ignore
-import { getFirestore, doc, setDoc, getDoc, collection } from 'firebase/firestore';
+import { getDatabase, ref, set, onValue, get, child, update, off } from 'firebase/database';
 
 // Helper to safely access environment variables in various environments (Vite, CRA, Node)
 export const getEnv = (key: string): string => {
@@ -90,7 +90,7 @@ export const getAutoEmoji = (name: string): string => {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-let firestore: any = null, firebaseAuth: any = null;
+let rtdb: any = null, firebaseAuth: any = null;
 
 class StorageService {
   private pushTimer: any = null;
@@ -115,24 +115,47 @@ class StorageService {
       try {
           const app = initializeApp(FIREBASE_CONFIG);
           firebaseAuth = getAuth(app);
-          firestore = getFirestore(app);
+          rtdb = getDatabase(app);
           
           onAuthStateChanged(firebaseAuth, async (u: any) => {
               if (u) {
                   this.setSession(u.uid);
-                  await this.pullFromCloud();
+                  this.setupRealtimeSync(u.uid);
+              } else {
+                  this.cleanupRealtimeSync();
               }
           });
-          console.log("[MoneyFlow] Firebase Initialized. Cloud Sync Active.");
+          console.log("[MoneyFlow] Firebase Initialized. Realtime Sync Active.");
       } catch (e) {
           console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
           this.downgradeToLocal();
       }
   }
 
+  private syncUnsubscribe: any = null;
+
+  private setupRealtimeSync(uid: string) {
+      if (!rtdb) return;
+      const userRef = ref(rtdb, `users/${uid}`);
+      this.syncUnsubscribe = onValue(userRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+              console.log("[MoneyFlow] Realtime Update Received");
+              this.restoreFullState(data);
+          }
+      });
+  }
+
+  private cleanupRealtimeSync() {
+      if (this.syncUnsubscribe) {
+          this.syncUnsubscribe();
+          this.syncUnsubscribe = null;
+      }
+  }
+
   private downgradeToLocal() {
       firebaseAuth = null;
-      firestore = null;
+      rtdb = null;
       notify();
   }
 
@@ -166,28 +189,30 @@ class StorageService {
   }
 
   private scheduleCloudPush() { 
-      if (firestore && this.getSession()) {
-          // Debounce writes to avoid spamming Firestore on every keystroke
+      if (rtdb && this.getSession()) {
+          // Debounce writes to avoid spamming RTDB on every keystroke
           if (this.pushTimer) clearTimeout(this.pushTimer);
-          this.pushTimer = setTimeout(() => this.pushToCloud(), 3000); 
+          this.pushTimer = setTimeout(() => this.pushToCloud(), 2000); 
       }
   }
 
   async pushToCloud() { 
       const id = this.getSession(); 
-      if (id && firestore) {
+      if (id && rtdb) {
           try {
-            await setDoc(doc(firestore, 'users', id), { ...this.getFullState(), updatedAt: new Date().toISOString() }, { merge: true }); 
+            const userRef = ref(rtdb, `users/${id}`);
+            await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
           } catch(e) { console.error("Cloud Push Failed", e); }
       }
   }
 
   async pullFromCloud() { 
       const id = this.getSession(); 
-      if (id && firestore) { 
+      if (id && rtdb) { 
           try {
-            const s = await getDoc(doc(firestore, 'users', id)); 
-            if (s.exists()) this.restoreFullState(s.data()); 
+            const userRef = ref(rtdb, `users/${id}`);
+            const s = await get(userRef); 
+            if (s.exists()) this.restoreFullState(s.val()); 
           } catch(e) { console.error("Cloud Pull Failed", e); }
       } 
   }
@@ -387,7 +412,7 @@ class StorageService {
 
   getImportRules() { return this.get<ImportRule[]>('importRules', []); }
   saveImportRule(r: ImportRule) { const rs = this.getImportRules(); const ex = rs.findIndex(x => x.keyword === r.keyword); if (ex > -1) rs[ex] = r; else rs.push(r); this.set('importRules', rs); }
-  getSyncConfig(): SyncConfig { return { type: firestore ? 'FIREBASE' : 'LOCAL', lastSyncedAt: new Date().toISOString() }; }
+  getSyncConfig(): SyncConfig { return { type: rtdb ? 'FIREBASE' : 'LOCAL', lastSyncedAt: new Date().toISOString() }; }
   
   // Plan
   getPlan() { return this.get<FinancialPlan | null>('plan', null); }
