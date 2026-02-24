@@ -210,10 +210,13 @@ class StorageService {
   }
 
   private syncUnsubscribe: any = null;
+  private syncInterval: any = null;
 
   private setupRealtimeSync(uid: string) {
       if (!rtdb) return;
       const userRef = ref(rtdb, `users/${uid}`);
+      
+      // 1. Realtime Listener (Push-based)
       this.syncUnsubscribe = onValue(userRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
@@ -221,12 +224,31 @@ class StorageService {
               this.restoreFullState(data);
           }
       });
+
+      // 2. Polling Fallback (Pull-based) - Every 5 seconds
+      // This ensures that even if the realtime listener disconnects or misses an event,
+      // we force a sync periodically.
+      this.syncInterval = setInterval(async () => {
+          try {
+              const snapshot = await get(userRef);
+              if (snapshot.exists()) {
+                   // We don't log here to avoid spamming console
+                   this.restoreFullState(snapshot.val());
+              }
+          } catch (e) {
+              console.warn("[MoneyFlow] Polling Sync Failed", e);
+          }
+      }, 5000);
   }
 
   private cleanupRealtimeSync() {
       if (this.syncUnsubscribe) {
           this.syncUnsubscribe();
           this.syncUnsubscribe = null;
+      }
+      if (this.syncInterval) {
+          clearInterval(this.syncInterval);
+          this.syncInterval = null;
       }
   }
 
@@ -267,7 +289,8 @@ class StorageService {
           transactions: this.getTransactions(),
           goals: this.getGoals(),
           importRules: this.getImportRules(),
-          plan: this.getPlan()
+          plan: this.getPlan(),
+          profile: this.get('profile', null)
       };
   }
 
@@ -316,6 +339,7 @@ class StorageService {
       };
 
       if(data.settings) this.set('settings', data.settings, true);
+      if(data.profile) this.set('profile', data.profile, true);
       if(data.accounts) mergeList('accounts', data.accounts);
       if(data.categories) mergeList('categories', data.categories);
       if(data.transactions) mergeList('transactions', data.transactions);
@@ -531,6 +555,7 @@ class StorageService {
   
   private calculateAccountBalanceAt(account: Account, transactions: Transaction[], endDate: string): number {
       let b = account.initialBalance;
+      if (!Array.isArray(transactions)) return b; // Safety check
       transactions.filter(t => t.accountId === account.id && t.date <= endDate).forEach(t => {
           if (t.type === 'INCOME') b += t.amount;
           else if (t.type === 'EXPENSE' || t.type === 'INVESTMENT') b -= t.amount;
