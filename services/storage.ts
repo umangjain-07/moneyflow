@@ -23,6 +23,7 @@ export const getEnv = (key: string): string => {
         else if (key === 'FIREBASE_STORAGE_BUCKET') value = metaEnv.VITE_FIREBASE_STORAGE_BUCKET;
         else if (key === 'FIREBASE_MESSAGING_SENDER_ID') value = metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID;
         else if (key === 'FIREBASE_APP_ID') value = metaEnv.VITE_FIREBASE_APP_ID;
+        else if (key === 'FIREBASE_DATABASE_URL') value = metaEnv.VITE_FIREBASE_DATABASE_URL;
         
         // Fallback for dynamic access if not explicitly listed above
         if (!value) {
@@ -45,7 +46,8 @@ const FIREBASE_CONFIG = {
   projectId: getEnv('FIREBASE_PROJECT_ID'),
   storageBucket: getEnv('FIREBASE_STORAGE_BUCKET'),
   messagingSenderId: getEnv('FIREBASE_MESSAGING_SENDER_ID'),
-  appId: getEnv('FIREBASE_APP_ID')
+  appId: getEnv('FIREBASE_APP_ID'),
+  databaseURL: getEnv('FIREBASE_DATABASE_URL')
 };
 
 const TAG_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#14b8a6'];
@@ -113,6 +115,16 @@ class StorageService {
 
       // 2. Attempt Initialization
       try {
+          // Sanitize databaseURL if user pasted the console URL
+          if (FIREBASE_CONFIG.databaseURL && FIREBASE_CONFIG.databaseURL.includes('console.firebase.google.com')) {
+             console.warn("[MoneyFlow] Invalid databaseURL detected (looks like console URL). Attempting to infer correct URL...");
+             // Try to construct standard URL from projectId if available
+             if (FIREBASE_CONFIG.projectId) {
+                 FIREBASE_CONFIG.databaseURL = `https://${FIREBASE_CONFIG.projectId}-default-rtdb.firebaseio.com`;
+                 console.log(`[MoneyFlow] Inferred databaseURL: ${FIREBASE_CONFIG.databaseURL}`);
+             }
+          }
+
           const app = initializeApp(FIREBASE_CONFIG);
           firebaseAuth = getAuth(app);
           rtdb = getDatabase(app);
