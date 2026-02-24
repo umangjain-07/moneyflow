@@ -379,7 +379,18 @@ class StorageService {
         const p = new GoogleAuthProvider(); 
         const r = await signInWithPopup(firebaseAuth, p); 
         this.setSession(r.user.uid); 
+        
+        // Pull data first
         await this.pullFromCloud(); 
+        
+        // Update Profile from Google Data
+        const profile = { 
+            username: r.user.displayName || r.user.email?.split('@')[0] || 'User', 
+            email: r.user.email, 
+            photoURL: r.user.photoURL 
+        };
+        this.set('profile', profile);
+        
         return true; 
       } catch (e: any) {
           if (e.code === 'auth/invalid-api-key' || e.code === 'auth/configuration-not-found' || e.code === 'auth/project-not-found') {
@@ -408,6 +419,13 @@ class StorageService {
              const cred = await signInWithEmailAndPassword(firebaseAuth, email, p);
              this.setSession(cred.user.uid);
              await this.pullFromCloud();
+             
+             // Ensure profile exists
+             const currentProfile = this.get('profile', null);
+             if (!currentProfile) {
+                 this.set('profile', { username: u.split('@')[0], email: email });
+             }
+             
              return { success: true };
           } catch(e: any) {
              // Auto-downgrade on configuration errors to allow local usage
@@ -424,7 +442,16 @@ class StorageService {
           }
       } else {
           // Local Fallback
-          this.setSession(u); 
+          // Normalize ID to lowercase to prevent duplicates, but keep display name
+          const id = u.toLowerCase();
+          this.setSession(id); 
+          
+          // Update profile if not exists or if we want to update it
+          const currentProfile = this.get('profile', null);
+          if (!currentProfile) {
+              this.set('profile', { username: u });
+          }
+          
           return { success: true }; 
       }
   }
@@ -437,8 +464,11 @@ class StorageService {
 
              const cred = await createUserWithEmailAndPassword(firebaseAuth, email, p);
              this.setSession(cred.user.uid);
+             
              // Initialize default data for new user in cloud
              this.set('settings', DEFAULT_SETTINGS, true); 
+             this.set('profile', { username: u.split('@')[0], email: email }, true);
+             
              await this.pushToCloud();
              return { success: true };
           } catch(e: any) {
@@ -456,14 +486,28 @@ class StorageService {
           }
       } else {
           // Local Fallback
-          this.setSession(u); 
+          const id = u.toLowerCase();
+          this.setSession(id); 
           this.set('settings', DEFAULT_SETTINGS); 
+          this.set('profile', { username: u });
           return { success: true };
       }
   }
 
   isLoggedIn() { return !!this.getSession(); }
-  getCurrentUser() { return { username: this.getSession() || 'User', id: this.getSession() || '', photoURL: undefined as string | undefined }; }
+  
+  getCurrentUser() { 
+      const session = this.getSession();
+      if (!session) return { username: 'Guest', id: '', photoURL: undefined };
+      
+      const profile = this.get('profile', { username: session, photoURL: undefined });
+      // Fallback to session ID if username is missing in profile (legacy data)
+      return { 
+          username: profile.username || session, 
+          id: session, 
+          photoURL: profile.photoURL as string | undefined 
+      }; 
+  }
   getSettings() { return this.get<AppSettings>('settings', DEFAULT_SETTINGS); }
   updateSettings(s: Partial<AppSettings>) { 
       const cur = this.getSettings(); 
