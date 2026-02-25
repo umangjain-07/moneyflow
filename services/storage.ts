@@ -309,26 +309,6 @@ class StorageService {
           const merged = [...remoteList];
           
           // Add local items that are NOT in remote (Offline creations)
-          // Note: This assumes deletions are handled by the server. 
-          // If a user deleted an item on another device, it won't be in remoteList.
-          // If we keep local items not in remote, we might resurrect deleted items.
-          // However, for a simple sync, "Server Wins" usually means "Take Server State".
-          // BUT, if we have offline unsynced items, we want to keep them.
-          // A true sync requires "lastSyncedAt" timestamps per item.
-          // For this MVP, we will assume:
-          // 1. If it's in Remote, use Remote.
-          // 2. If it's in Local but NOT Remote, keep it ONLY if it was created recently (naive) or just keep it.
-          // Let's go with: Server State is the Checkout. 
-          // BUT, to support "add on offline device", we should ideally merge.
-          // Given the user asked for "checkout... so that always stays in sync", 
-          // strict server-truth is safer to avoid drift.
-          
-          // However, to be "git-like" and support offline additions:
-          // We'll trust the server state 100% for now to ensure "immediate reflection".
-          // Any local offline changes should have been pushed. 
-          // If they weren't, they might be lost if we strictly overwrite.
-          // Let's do a safe merge: Use Remote, but check for Local IDs that don't exist in Remote.
-          
           localList.forEach(localItem => {
               if (!remoteMap.has(localItem.id)) {
                   merged.push(localItem);
@@ -349,6 +329,70 @@ class StorageService {
       notify();
   }
 
+  private async migrateLocalData(oldId: string, newId: string) {
+      if (!oldId || !newId || oldId === newId) return;
+      const keys = ['settings', 'accounts', 'categories', 'transactions', 'goals', 'importRules', 'plan', 'profile'];
+      
+      console.log(`[MoneyFlow] Attempting migration from '${oldId}' to '${newId}'`);
+
+      for (const key of keys) {
+          const oldKey = `user_${oldId.toLowerCase()}_${key}`;
+          const newKey = `user_${newId}_${key}`;
+          
+          // Try Memory -> LocalStorage -> IDB
+          let oldVal = this.memoryCache[oldKey];
+          if (!oldVal) {
+              const s = localStorage.getItem(oldKey);
+              if (s) try { oldVal = JSON.parse(s); } catch(e){}
+          }
+          
+          if (!oldVal && this.dbPromise) {
+              const db = await this.dbPromise;
+              oldVal = await db.get('store', oldKey);
+          }
+
+          if (!oldVal) continue;
+          
+          try {
+              // Get existing new value (from Memory/LS) to merge
+              let newVal = this.memoryCache[newKey];
+              if (!newVal) {
+                   const s = localStorage.getItem(newKey);
+                   if (s) try { newVal = JSON.parse(s); } catch(e){}
+              }
+
+              let finalVal = oldVal;
+              
+              if (newVal) {
+                  // Merge logic
+                  if (Array.isArray(oldVal) && Array.isArray(newVal)) {
+                      // Merge arrays by ID
+                      const newMap = new Map(newVal.map((i: any) => [i.id, i]));
+                      const merged = [...newVal];
+                      oldVal.forEach((item: any) => {
+                          if (!newMap.has(item.id)) {
+                              merged.push(item);
+                          }
+                      });
+                      finalVal = merged;
+                  } else {
+                      // For objects, if New exists, keep New (Cloud wins)
+                      finalVal = newVal; 
+                  }
+              }
+              
+              // Update ALL layers
+              this.memoryCache[newKey] = finalVal;
+              localStorage.setItem(newKey, JSON.stringify(finalVal));
+              if (this.dbPromise) {
+                  const db = await this.dbPromise;
+                  await db.put('store', finalVal, newKey);
+              }
+              console.log(`[MoneyFlow] Migrated ${key}`);
+          } catch (e) { console.error("Migration Error", e); }
+      }
+  }
+
   private pendingSyncKeys: Set<string> = new Set();
 
   private scheduleCloudPush(key?: string) { 
@@ -357,7 +401,7 @@ class StorageService {
       if (rtdb && this.getSession()) {
           // Debounce writes
           if (this.pushTimer) clearTimeout(this.pushTimer);
-          this.pushTimer = setTimeout(() => this.pushToCloud(), 2000); 
+          this.pushTimer = setTimeout(() => this.pushToCloud(), 1000); // Reduced to 1s
       }
   }
 
@@ -379,6 +423,7 @@ class StorageService {
                  // Fallback to full push if no keys tracked (shouldn't happen often)
                  await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
              }
+             console.log("[MoneyFlow] Cloud Push Success");
           } catch(e) { console.error("Cloud Push Failed", e); }
       }
   }
@@ -402,6 +447,13 @@ class StorageService {
       try {
         const p = new GoogleAuthProvider(); 
         const r = await signInWithPopup(firebaseAuth, p); 
+        
+        // Attempt Migration from Email or Username
+        if (r.user.email) {
+            await this.migrateLocalData(r.user.email, r.user.uid);
+            await this.migrateLocalData(r.user.email.split('@')[0], r.user.uid);
+        }
+
         this.setSession(r.user.uid); 
         
         // Pull data first
@@ -442,6 +494,11 @@ class StorageService {
              if (!email.includes('@')) email = `${u}@moneyflow.app`;
 
              const cred = await signInWithEmailAndPassword(firebaseAuth, email, p);
+             
+             // Attempt Migration
+             await this.migrateLocalData(u, cred.user.uid);
+             if (email !== u) await this.migrateLocalData(email, cred.user.uid);
+
              this.setSession(cred.user.uid);
              await this.pullFromCloud();
              
@@ -489,6 +546,10 @@ class StorageService {
              if (!email.includes('@')) email = `${u}@moneyflow.app`;
 
              const cred = await createUserWithEmailAndPassword(firebaseAuth, email, p);
+             
+             // Attempt Migration (in case they used local mode with this username before registering)
+             await this.migrateLocalData(u, cred.user.uid);
+
              this.setSession(cred.user.uid);
              
              // Initialize default data for new user in cloud
