@@ -285,8 +285,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                             </div>
                             <div>
                                 <p className="text-sm font-bold text-slate-200">Cloud Real-time Sync</p>
-                                <p className="text-[10px] text-slate-500 uppercase font-bold mt-0.5">
+                                <p className="text-[10px] text-slate-500 uppercase font-bold mt-0.5 flex items-center gap-1">
                                     {syncConfig.type === 'FIREBASE' ? 'Connected to Google' : 'Local Sandbox'}
+                                    {syncConfig.status === 'SYNCING' && <RefreshCw size={10} className="animate-spin text-emerald-500" />}
+                                    {syncConfig.status === 'ERROR' && <AlertTriangle size={10} className="text-rose-500" />}
                                 </p>
                             </div>
                         </div>

@@ -44,6 +44,8 @@ export const Auth: React.FC = () => {
       setError('');
       try {
           await db.authenticateWithGoogle();
+          // Force a pull after auth to ensure data is fresh
+          await db.pullFromCloud();
       } catch (e: any) {
           setError(e.message || "Google Auth Failed. Check configuration.");
       } finally {

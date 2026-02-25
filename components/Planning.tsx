@@ -118,7 +118,7 @@ export const Planning: React.FC = () => {
       if (plan && !selectedTemplateId) {
           if (plan.activeTemplateId) {
               setSelectedTemplateId(plan.activeTemplateId);
-          } else if (plan.budgetTemplates && plan.budgetTemplates.length > 0) {
+          } else if (plan.budgetTemplates && Array.isArray(plan.budgetTemplates) && plan.budgetTemplates.length > 0) {
               setSelectedTemplateId(plan.budgetTemplates[0].id);
           }
       }
@@ -135,7 +135,7 @@ export const Planning: React.FC = () => {
       if (found) {
           const validCats = categories.filter(c => c.type !== 'INCOME');
           const mergedConfigs = validCats.map(c => {
-              const existing = found.configs.find(conf => conf.categoryId === c.id);
+              const existing = found.configs?.find(conf => conf.categoryId === c.id);
               if (existing) return { ...existing };
               return {
                   categoryId: c.id,
@@ -211,14 +211,14 @@ export const Planning: React.FC = () => {
       const override = plan.monthlyOverrides?.[monthKey];
       if (override?.linkedTemplateId && plan.budgetTemplates) {
           const linkedTemplate = plan.budgetTemplates.find(t => t.id === override.linkedTemplateId);
-          if (linkedTemplate) return linkedTemplate.configs;
+          if (linkedTemplate) return linkedTemplate.configs || [];
       }
-      if (override && override.configs.length > 0) return override.configs;
+      if (override && override.configs && override.configs.length > 0) return override.configs;
       if (plan.activeTemplateId && plan.budgetTemplates) {
           const globalTemplate = plan.budgetTemplates.find(t => t.id === plan.activeTemplateId);
-          if (globalTemplate) return globalTemplate.configs;
+          if (globalTemplate) return globalTemplate.configs || [];
       }
-      return plan.categoryConfigs;
+      return plan.categoryConfigs || [];
   };
 
   const getActivePlanMeta = (targetDate: Date) => {
@@ -306,7 +306,7 @@ export const Planning: React.FC = () => {
       if (!plan || !selectedTemplateId) return;
       if (!confirm("Delete this plan? Months linked to it will revert to the Global Default.")) return;
       const updatedTemplates = plan.budgetTemplates?.filter(t => t.id !== selectedTemplateId) || [];
-      const newOverrides = { ...plan.monthlyOverrides };
+      const newOverrides = { ...(plan.monthlyOverrides || {}) };
       Object.keys(newOverrides).forEach(k => {
           if (newOverrides[k].linkedTemplateId === selectedTemplateId) {
               delete newOverrides[k]; 

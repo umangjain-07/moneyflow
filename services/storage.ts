@@ -211,34 +211,46 @@ class StorageService {
 
   private syncUnsubscribe: any = null;
   private syncInterval: any = null;
+  private syncStatus: 'IDLE' | 'SYNCING' | 'ERROR' = 'IDLE';
 
   private setupRealtimeSync(uid: string) {
       if (!rtdb) return;
       const userRef = ref(rtdb, `users/${uid}`);
       
+      console.log(`[MoneyFlow] Setting up realtime sync for ${uid}`);
+      this.syncStatus = 'SYNCING';
+      notify();
+
       // 1. Realtime Listener (Push-based)
       this.syncUnsubscribe = onValue(userRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
-              console.log("[MoneyFlow] Realtime Update Received");
+              console.log("[MoneyFlow] Realtime Update Received", Object.keys(data));
               this.restoreFullState(data);
+              this.syncStatus = 'IDLE';
+              notify();
+          } else {
+              console.log("[MoneyFlow] Realtime Update: No Data (New User?)");
+              this.syncStatus = 'IDLE';
+              notify();
           }
+      }, (error: any) => {
+          console.error("[MoneyFlow] Realtime Sync Error", error);
+          this.syncStatus = 'ERROR';
+          notify();
       });
 
-      // 2. Polling Fallback (Pull-based) - Every 5 seconds
-      // This ensures that even if the realtime listener disconnects or misses an event,
-      // we force a sync periodically.
+      // 2. Polling Fallback (Pull-based) - Every 10 seconds
       this.syncInterval = setInterval(async () => {
           try {
               const snapshot = await get(userRef);
               if (snapshot.exists()) {
-                   // We don't log here to avoid spamming console
                    this.restoreFullState(snapshot.val());
               }
           } catch (e) {
               console.warn("[MoneyFlow] Polling Sync Failed", e);
           }
-      }, 5000);
+      }, 10000);
   }
 
   private cleanupRealtimeSync() {
@@ -268,8 +280,16 @@ class StorageService {
   
   private get<T>(key: string, def: T): T { 
       const k = this.k(key); 
-      if (k in this.memoryCache) return this.memoryCache[k];
-      try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : def; } catch (e) { return def; } 
+      if (k in this.memoryCache) {
+          const val = this.memoryCache[k];
+          return val === undefined || val === null ? def : val;
+      }
+      try { 
+          const s = localStorage.getItem(k); 
+          if (!s || s === 'undefined' || s === 'null') return def;
+          const parsed = JSON.parse(s);
+          return parsed === undefined || parsed === null ? def : parsed;
+      } catch (e) { return def; } 
   }
 
   private set<T>(key: string, v: T, skipSync = false) { 
@@ -297,6 +317,8 @@ class StorageService {
   // Smart Merge Strategy: Last-Write-Wins based on updatedAt
   // This ensures that if we edit offline, our newer timestamp wins against an older server timestamp.
   private restoreFullState(data: any) {
+      if (!data) return;
+
       const mergeList = (key: string, remoteList: any[]) => {
           if (!Array.isArray(remoteList)) return;
           const localList = this.get<any[]>(key, []);
@@ -348,7 +370,14 @@ class StorageService {
 
       if(data.settings) mergeObject('settings', data.settings);
       if(data.profile) mergeObject('profile', data.profile);
-      if(data.plan) mergeObject('plan', data.plan);
+      
+      // Special handling for Plan: Ensure it's not null
+      if(data.plan) {
+          mergeObject('plan', data.plan);
+      } else {
+          // If remote has no plan, but we have a local one, keep local.
+          // If neither has plan, we'll initialize one when getPlan is called.
+      }
 
       if(data.accounts) mergeList('accounts', data.accounts);
       if(data.categories) mergeList('categories', data.categories);
@@ -461,11 +490,24 @@ class StorageService {
   async pullFromCloud() { 
       const id = this.getSession(); 
       if (id && rtdb) { 
+          console.log(`[MoneyFlow] Force Pulling from Cloud for ${id}...`);
+          this.syncStatus = 'SYNCING';
+          notify();
           try {
             const userRef = ref(rtdb, `users/${id}`);
             const s = await get(userRef); 
-            if (s.exists()) this.restoreFullState(s.val()); 
-          } catch(e) { console.error("Cloud Pull Failed", e); }
+            if (s.exists()) {
+                console.log("[MoneyFlow] Cloud Pull Success", Object.keys(s.val()));
+                this.restoreFullState(s.val()); 
+            } else {
+                console.log("[MoneyFlow] Cloud Pull: No Data Found");
+            }
+            this.syncStatus = 'IDLE';
+          } catch(e) { 
+              console.error("Cloud Pull Failed", e); 
+              this.syncStatus = 'ERROR';
+          }
+          notify();
       } 
   }
 
@@ -656,10 +698,11 @@ class StorageService {
   }
 
   getAccounts() { 
-      const accs = this.get<Account[]>('accounts', []); 
+      let accs = this.get<Account[]>('accounts', []); 
+      if (!Array.isArray(accs)) accs = [];
       const txs = this.getTransactions(); 
       const nowStr = new Date().toISOString().split('T')[0];
-      return accs.filter(a => !a.isDeleted).map(a => ({
+      return accs.filter(a => a && !a.isDeleted).map(a => ({
           ...a,
           balance: this.calculateAccountBalanceAt(a, txs, nowStr)
       }));
@@ -671,7 +714,11 @@ class StorageService {
       if (a.id) this.set('accounts', accs.map(ex => ex.id === a.id ? { ...a, updatedAt: now } : ex)); 
       else this.set('accounts', [...accs, { ...a, id: generateId(), updatedAt: now }]); 
   }
-  getCategories() { return this.get<Category[]>('categories', []).filter(c => !c.isDeleted); }
+  getCategories() { 
+      let cats = this.get<Category[]>('categories', []);
+      if (!Array.isArray(cats)) cats = [];
+      return cats.filter(c => c && !c.isDeleted); 
+  }
   
   saveCategory(c: Category) { 
       const cats = this.get<Category[]>('categories', []); 
@@ -720,7 +767,11 @@ class StorageService {
       return { id: cat.id, isNew: true };
   }
   mergeCategory(s: string, t: string) { if(s===t) return; const txs = this.getTransactions().map(tx=>tx.categoryId===s?{...tx, categoryId:t}:tx); this.set('transactions', txs); this.deleteCategory(s); }
-  getTransactions() { return this.get<Transaction[]>('transactions', []).filter(t => !t.isDeleted).sort((a,b)=>b.date.localeCompare(a.date)); }
+  getTransactions() { 
+      let txs = this.get<Transaction[]>('transactions', []);
+      if (!Array.isArray(txs)) txs = [];
+      return txs.filter(t => t && !t.isDeleted).sort((a,b)=>b.date.localeCompare(a.date)); 
+  }
   addTransaction(t: Omit<Transaction, 'id'>) { this.set('transactions', [{ ...t, id: generateId(), updatedAt: new Date().toISOString() }, ...this.get<Transaction[]>('transactions', [])]); }
   updateTransaction(t: Transaction) { this.set('transactions', this.get<Transaction[]>('transactions', []).map(ex=>ex.id===t.id?{ ...t, updatedAt: new Date().toISOString() }:ex)); }
   bulkAddTransactions(txs: Omit<Transaction, 'id'>[]) { 
@@ -732,7 +783,11 @@ class StorageService {
       const now = new Date().toISOString();
       this.set('transactions', txs.map(t => t.id === id ? { ...t, isDeleted: true, updatedAt: now } : t)); 
   }
-  getGoals() { return this.get<Goal[]>('goals', []).filter(g => !g.isDeleted); }
+  getGoals() { 
+      let goals = this.get<Goal[]>('goals', []);
+      if (!Array.isArray(goals)) goals = [];
+      return goals.filter(g => g && !g.isDeleted); 
+  }
   saveGoal(g: Goal) { 
       const goals = this.get<Goal[]>('goals', []); 
       const now = new Date().toISOString();
@@ -755,7 +810,11 @@ class StorageService {
       this.set('transactions', [outTx, inTx, ...txs]);
   }
 
-  getImportRules() { return this.get<ImportRule[]>('importRules', []).filter(r => !r.isDeleted); }
+  getImportRules() { 
+      let rules = this.get<ImportRule[]>('importRules', []);
+      if (!Array.isArray(rules)) rules = [];
+      return rules.filter(r => r && !r.isDeleted); 
+  }
   saveImportRule(r: ImportRule) { 
       const rs = this.get<ImportRule[]>('importRules', []); 
       const ex = rs.findIndex(x => x.keyword === r.keyword); 
@@ -764,10 +823,30 @@ class StorageService {
       else rs.push({ ...r, updatedAt: now }); 
       this.set('importRules', rs); 
   }
-  getSyncConfig(): SyncConfig { return { type: rtdb ? 'FIREBASE' : 'LOCAL', lastSyncedAt: new Date().toISOString() }; }
+  getSyncConfig(): SyncConfig & { status: string } { 
+      return { 
+          type: rtdb ? 'FIREBASE' : 'LOCAL', 
+          lastSyncedAt: new Date().toISOString(),
+          status: this.syncStatus
+      }; 
+  }
   
   // Plan
-  getPlan() { return this.get<FinancialPlan | null>('plan', null); }
+  getPlan() { 
+      const p = this.get<FinancialPlan | null>('plan', null); 
+      if (!p) {
+          // Return a safe default plan structure to prevent crashes
+          return {
+              salary: 0,
+              savingsGoal: 0,
+              startDate: new Date().toISOString(),
+              endDate: new Date().toISOString(),
+              categoryConfigs: [],
+              updatedAt: new Date().toISOString()
+          };
+      }
+      return p;
+  }
   savePlan(p: FinancialPlan) { this.set('plan', { ...p, updatedAt: new Date().toISOString() }); }
 
   async resetEverything() { 

@@ -75,6 +75,7 @@ export interface ImportRule {
 export interface SyncConfig {
   type: 'LOCAL' | 'FIREBASE';
   lastSyncedAt?: string;
+  status?: 'IDLE' | 'SYNCING' | 'ERROR';
 }
 
 export interface AppSettings {
