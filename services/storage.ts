@@ -294,38 +294,68 @@ class StorageService {
       };
   }
 
-  // Smart Merge Strategy: "Git-like" checkout
-  // Instead of overwriting, we merge lists by ID to preserve local offline changes if possible,
-  // but generally treat Server as Source of Truth for conflicts.
+  // Smart Merge Strategy: Last-Write-Wins based on updatedAt
+  // This ensures that if we edit offline, our newer timestamp wins against an older server timestamp.
   private restoreFullState(data: any) {
       const mergeList = (key: string, remoteList: any[]) => {
           if (!Array.isArray(remoteList)) return;
           const localList = this.get<any[]>(key, []);
-          
-          // Create a map of remote items
+          const localMap = new Map(localList.map(i => [i.id, i]));
           const remoteMap = new Map(remoteList.map(i => [i.id, i]));
           
-          // Start with remote items (Server Truth)
-          const merged = [...remoteList];
-          
-          // Add local items that are NOT in remote (Offline creations)
-          localList.forEach(localItem => {
-              if (!remoteMap.has(localItem.id)) {
-                  merged.push(localItem);
+          const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+          const merged: any[] = [];
+
+          allIds.forEach(id => {
+              const local = localMap.get(id);
+              const remote = remoteMap.get(id);
+
+              if (local && remote) {
+                  const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
+                  const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+                  // If local is strictly newer, keep local. Otherwise trust server.
+                  if (localTime > remoteTime) merged.push(local);
+                  else merged.push(remote);
+              } else if (remote) {
+                  merged.push(remote);
+              } else if (local) {
+                  // Item exists locally but not on remote.
+                  // If it was deleted on remote, we should probably delete it? 
+                  // But we don't track deletions yet. 
+                  // For now, assume it's a new local item that hasn't synced.
+                  merged.push(local);
               }
           });
           
           this.set(key, merged, true);
       };
 
-      if(data.settings) this.set('settings', data.settings, true);
-      if(data.profile) this.set('profile', data.profile, true);
+      const mergeObject = (key: string, remoteObj: any) => {
+          if (!remoteObj) return;
+          const localObj = this.get<any>(key, null);
+          if (!localObj) {
+              this.set(key, remoteObj, true);
+              return;
+          }
+          
+          const localTime = localObj.updatedAt ? new Date(localObj.updatedAt).getTime() : 0;
+          const remoteTime = remoteObj.updatedAt ? new Date(remoteObj.updatedAt).getTime() : 0;
+          
+          if (remoteTime >= localTime) {
+              this.set(key, remoteObj, true);
+          }
+      };
+
+      if(data.settings) mergeObject('settings', data.settings);
+      if(data.profile) mergeObject('profile', data.profile);
+      if(data.plan) mergeObject('plan', data.plan);
+
       if(data.accounts) mergeList('accounts', data.accounts);
       if(data.categories) mergeList('categories', data.categories);
       if(data.transactions) mergeList('transactions', data.transactions);
       if(data.goals) mergeList('goals', data.goals);
       if(data.importRules) mergeList('importRules', data.importRules);
-      if(data.plan) this.set('plan', data.plan, true);
+      
       notify();
   }
 
@@ -464,7 +494,8 @@ class StorageService {
         const profile = { 
             username: r.user.displayName || r.user.email || 'User', 
             email: r.user.email, 
-            photoURL: r.user.photoURL 
+            photoURL: r.user.photoURL,
+            updatedAt: new Date().toISOString()
         };
         this.set('profile', profile);
         
@@ -506,7 +537,7 @@ class StorageService {
              const currentProfile = this.get('profile', null);
              if (!currentProfile) {
                  // Use full email (or original username input) as username
-                 this.set('profile', { username: u, email: email });
+                 this.set('profile', { username: u, email: email, updatedAt: new Date().toISOString() });
              }
              
              return { success: true };
@@ -532,7 +563,7 @@ class StorageService {
           // Update profile if not exists or if we want to update it
           const currentProfile = this.get('profile', null);
           if (!currentProfile) {
-              this.set('profile', { username: u });
+              this.set('profile', { username: u, updatedAt: new Date().toISOString() });
           }
           
           return { success: true }; 
@@ -553,9 +584,9 @@ class StorageService {
              this.setSession(cred.user.uid);
              
              // Initialize default data for new user in cloud
-             this.set('settings', DEFAULT_SETTINGS, true); 
+             this.set('settings', { ...DEFAULT_SETTINGS, updatedAt: new Date().toISOString() }, true); 
              // Use full email/username
-             this.set('profile', { username: u, email: email }, true);
+             this.set('profile', { username: u, email: email, updatedAt: new Date().toISOString() }, true);
              
              await this.pushToCloud();
              return { success: true };
@@ -600,7 +631,7 @@ class StorageService {
   getSettings() { return this.get<AppSettings>('settings', DEFAULT_SETTINGS); }
   updateSettings(s: Partial<AppSettings>) { 
       const cur = this.getSettings(); 
-      const upd = { ...cur, ...s };
+      const upd = { ...cur, ...s, updatedAt: new Date().toISOString() };
       if (upd.currency) upd.currencySymbol = SYMBOLS[upd.currency] || '$';
       this.set('settings', upd); 
   }
@@ -628,38 +659,48 @@ class StorageService {
       const accs = this.get<Account[]>('accounts', []); 
       const txs = this.getTransactions(); 
       const nowStr = new Date().toISOString().split('T')[0];
-      return accs.map(a => ({
+      return accs.filter(a => !a.isDeleted).map(a => ({
           ...a,
           balance: this.calculateAccountBalanceAt(a, txs, nowStr)
       }));
   }
 
-  saveAccount(a: Account) { const accs = this.getAccounts(); if (a.id) this.set('accounts', accs.map(ex => ex.id === a.id ? a : ex)); else this.set('accounts', [...accs, { ...a, id: generateId() }]); }
-  getCategories() { return this.get<Category[]>('categories', []); }
+  saveAccount(a: Account) { 
+      const accs = this.get<Account[]>('accounts', []); 
+      const now = new Date().toISOString();
+      if (a.id) this.set('accounts', accs.map(ex => ex.id === a.id ? { ...a, updatedAt: now } : ex)); 
+      else this.set('accounts', [...accs, { ...a, id: generateId(), updatedAt: now }]); 
+  }
+  getCategories() { return this.get<Category[]>('categories', []).filter(c => !c.isDeleted); }
   
   saveCategory(c: Category) { 
-      const cats = this.getCategories(); 
+      const cats = this.get<Category[]>('categories', []); 
       if (!c.icon) c.icon = getAutoEmoji(c.name); 
+      const now = new Date().toISOString();
       
       const existingIndex = cats.findIndex(ex => ex.id === c.id);
       
       if (existingIndex > -1) {
           const oldCat = cats[existingIndex];
           if (oldCat.type !== c.type) {
-              const txs = this.getTransactions();
+              const txs = this.get<Transaction[]>('transactions', []);
               const updatedTxs = txs.map(t => 
-                  t.categoryId === c.id ? { ...t, type: c.type } : t
+                  t.categoryId === c.id ? { ...t, type: c.type, updatedAt: now } : t
               );
               this.set('transactions', updatedTxs);
           }
-          cats[existingIndex] = c;
+          cats[existingIndex] = { ...c, updatedAt: now };
           this.set('categories', cats);
       } else {
-          this.set('categories', [...cats, { ...c, id: c.id || generateId() }]);
+          this.set('categories', [...cats, { ...c, id: c.id || generateId(), updatedAt: now }]);
       }
   }
 
-  deleteCategory(id: string) { this.set('categories', this.getCategories().filter(c => c.id !== id)); }
+  deleteCategory(id: string) { 
+      const cats = this.get<Category[]>('categories', []);
+      const now = new Date().toISOString();
+      this.set('categories', cats.map(c => c.id === id ? { ...c, isDeleted: true, updatedAt: now } : c)); 
+  }
   resetCategories() { this.set('categories', [], true); }
   guessNecessity(name: string): 'NEED' | 'WANT' {
       const n = name.toLowerCase();
@@ -679,31 +720,55 @@ class StorageService {
       return { id: cat.id, isNew: true };
   }
   mergeCategory(s: string, t: string) { if(s===t) return; const txs = this.getTransactions().map(tx=>tx.categoryId===s?{...tx, categoryId:t}:tx); this.set('transactions', txs); this.deleteCategory(s); }
-  getTransactions() { return this.get<Transaction[]>('transactions', []).sort((a,b)=>b.date.localeCompare(a.date)); }
-  addTransaction(t: Omit<Transaction, 'id'>) { this.set('transactions', [{ ...t, id: generateId() }, ...this.getTransactions()]); }
-  updateTransaction(t: Transaction) { this.set('transactions', this.getTransactions().map(ex=>ex.id===t.id?t:ex)); }
-  bulkAddTransactions(txs: Omit<Transaction, 'id'>[]) { this.set('transactions', [...txs.map(t=>({...t, id:generateId()})), ...this.getTransactions()]); }
-  deleteTransaction(id: string) { this.set('transactions', this.getTransactions().filter(t=>t.id!==id)); }
-  getGoals() { return this.get<Goal[]>('goals', []); }
-  saveGoal(g: Goal) { const goals = this.getGoals(); if(g.id) this.set('goals', goals.map(ex=>ex.id===g.id?g:ex)); else this.set('goals', [...goals, {...g, id:generateId()}]); }
-  deleteGoal(id: string) { this.set('goals', this.getGoals().filter(g => g.id !== id)); }
+  getTransactions() { return this.get<Transaction[]>('transactions', []).filter(t => !t.isDeleted).sort((a,b)=>b.date.localeCompare(a.date)); }
+  addTransaction(t: Omit<Transaction, 'id'>) { this.set('transactions', [{ ...t, id: generateId(), updatedAt: new Date().toISOString() }, ...this.get<Transaction[]>('transactions', [])]); }
+  updateTransaction(t: Transaction) { this.set('transactions', this.get<Transaction[]>('transactions', []).map(ex=>ex.id===t.id?{ ...t, updatedAt: new Date().toISOString() }:ex)); }
+  bulkAddTransactions(txs: Omit<Transaction, 'id'>[]) { 
+      const now = new Date().toISOString();
+      this.set('transactions', [...txs.map(t=>({...t, id:generateId(), updatedAt: now})), ...this.get<Transaction[]>('transactions', [])]); 
+  }
+  deleteTransaction(id: string) { 
+      const txs = this.get<Transaction[]>('transactions', []);
+      const now = new Date().toISOString();
+      this.set('transactions', txs.map(t => t.id === id ? { ...t, isDeleted: true, updatedAt: now } : t)); 
+  }
+  getGoals() { return this.get<Goal[]>('goals', []).filter(g => !g.isDeleted); }
+  saveGoal(g: Goal) { 
+      const goals = this.get<Goal[]>('goals', []); 
+      const now = new Date().toISOString();
+      if(g.id) this.set('goals', goals.map(ex=>ex.id===g.id?{ ...g, updatedAt: now }:ex)); 
+      else this.set('goals', [...goals, {...g, id:generateId(), updatedAt: now}]); 
+  }
+  deleteGoal(id: string) { 
+      const goals = this.get<Goal[]>('goals', []);
+      const now = new Date().toISOString();
+      this.set('goals', goals.map(g => g.id === id ? { ...g, isDeleted: true, updatedAt: now } : g)); 
+  }
   
   addTransfer(fromId: string, toId: string, amount: number, date: string, description: string) {
       const fromTxId = generateId();
       const toTxId = generateId();
-      const txs = this.getTransactions();
-      const outTx: Transaction = { id: fromTxId, date, amount, description: description, categoryId: 'transfer_out', accountId: fromId, type: 'EXPENSE', relatedTransactionId: toTxId };
-      const inTx: Transaction = { id: toTxId, date, amount, description: description, categoryId: 'transfer_in', accountId: toId, type: 'INCOME', relatedTransactionId: fromTxId };
+      const now = new Date().toISOString();
+      const txs = this.get<Transaction[]>('transactions', []);
+      const outTx: Transaction = { id: fromTxId, date, amount, description: description, categoryId: 'transfer_out', accountId: fromId, type: 'EXPENSE', relatedTransactionId: toTxId, updatedAt: now };
+      const inTx: Transaction = { id: toTxId, date, amount, description: description, categoryId: 'transfer_in', accountId: toId, type: 'INCOME', relatedTransactionId: fromTxId, updatedAt: now };
       this.set('transactions', [outTx, inTx, ...txs]);
   }
 
-  getImportRules() { return this.get<ImportRule[]>('importRules', []); }
-  saveImportRule(r: ImportRule) { const rs = this.getImportRules(); const ex = rs.findIndex(x => x.keyword === r.keyword); if (ex > -1) rs[ex] = r; else rs.push(r); this.set('importRules', rs); }
+  getImportRules() { return this.get<ImportRule[]>('importRules', []).filter(r => !r.isDeleted); }
+  saveImportRule(r: ImportRule) { 
+      const rs = this.get<ImportRule[]>('importRules', []); 
+      const ex = rs.findIndex(x => x.keyword === r.keyword); 
+      const now = new Date().toISOString();
+      if (ex > -1) rs[ex] = { ...r, updatedAt: now }; 
+      else rs.push({ ...r, updatedAt: now }); 
+      this.set('importRules', rs); 
+  }
   getSyncConfig(): SyncConfig { return { type: rtdb ? 'FIREBASE' : 'LOCAL', lastSyncedAt: new Date().toISOString() }; }
   
   // Plan
   getPlan() { return this.get<FinancialPlan | null>('plan', null); }
-  savePlan(p: FinancialPlan) { this.set('plan', p); }
+  savePlan(p: FinancialPlan) { this.set('plan', { ...p, updatedAt: new Date().toISOString() }); }
 
   async resetEverything() { 
       const session = this.getSession();

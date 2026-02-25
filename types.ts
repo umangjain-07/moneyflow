@@ -20,6 +20,8 @@ export interface Account {
   balance: number;
   initialBalance: number;
   color?: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface Category {
@@ -30,7 +32,9 @@ export interface Category {
   necessity?: 'NEED' | 'WANT'; 
   color?: string;
   icon?: string;
-  defaultFrequency?: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY'; // New: User preference for frequency
+  defaultFrequency?: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY';
+  updatedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface Transaction {
@@ -43,6 +47,8 @@ export interface Transaction {
   type: TransactionType;
   relatedTransactionId?: string;
   tags?: string[];
+  updatedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface Goal {
@@ -53,13 +59,17 @@ export interface Goal {
   targetDate?: string;
   color: string;
   icon?: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface ImportRule {
   id: string;
   keyword: string; 
   type: 'INCOME' | 'EXPENSE' | 'INVESTMENT';
-  targetCategoryId?: string; // New: Direct mapping to existing category
+  targetCategoryId?: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface SyncConfig {
@@ -71,7 +81,8 @@ export interface AppSettings {
   currency: 'USD' | 'INR' | 'EUR' | 'GBP';
   currencySymbol: string;
   emergencyFundTargetMonths: number; 
-  savingsGoalPercent: number;        
+  savingsGoalPercent: number;
+  updatedAt?: string;
 }
 
 export interface FixedCostItem {
@@ -83,29 +94,29 @@ export interface FixedCostItem {
 
 export interface CategoryBudgetConfig {
     categoryId: string;
-    type: 'FIXED' | 'VARIABLE' | 'IGNORE' | 'SUBSCRIPTION'; // Added SUBSCRIPTION
-    allocatedAmount: number; // For SUBSCRIPTION and YEARLY, this is the FULL cost. For others, it's monthly.
+    type: 'FIXED' | 'VARIABLE' | 'IGNORE' | 'SUBSCRIPTION'; 
+    allocatedAmount: number; 
     period: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY' | 'CUSTOM'; 
-    customFrequencyDays?: number; // New: For "Every X Days" (SIPs, etc)
-    renewalDate?: string; // New: For tracking subscriptions
+    customFrequencyDays?: number; 
+    renewalDate?: string; 
 }
 
 export interface BudgetTemplate {
     id: string;
     name: string;
     configs: CategoryBudgetConfig[];
-    salary: number;      // Made mandatory
-    savingsGoal: number; // Made mandatory
+    salary: number;      
+    savingsGoal: number; 
 }
 
 export interface MonthlyBudgetOverride {
     configs: CategoryBudgetConfig[];
     label?: string;
-    linkedTemplateId?: string; // NEW: If set, this month dynamically mirrors the template
+    linkedTemplateId?: string; 
 }
 
 export interface FinancialPlan {
-  currency?: string; // New: Track currency at time of plan creation
+  currency?: string; 
   salary: number;
   isSalaried?: boolean; 
   salaryCategoryId?: string; 
@@ -113,11 +124,12 @@ export interface FinancialPlan {
   savingsGoal: number;
   startDate: string;
   endDate: string;
-  customPeriod?: boolean; // New: If false, automatically uses current month
+  customPeriod?: boolean; 
   categoryConfigs: CategoryBudgetConfig[];
-  monthlyOverrides?: Record<string, MonthlyBudgetOverride>; // Key: "YYYY-MM"
-  budgetTemplates?: BudgetTemplate[]; // Reusable templates
-  activeTemplateId?: string; // Indicates which template is currently active globally
+  monthlyOverrides?: Record<string, MonthlyBudgetOverride>; 
+  budgetTemplates?: BudgetTemplate[]; 
+  activeTemplateId?: string; 
+  updatedAt?: string;
 }
 
 export interface FinancialHealth {
