@@ -270,6 +270,8 @@ class StorageService {
       notify();
   }
 
+  getSyncStatus() { return this.syncStatus; }
+  
   private setSession(id: string) { 
       localStorage.setItem('moneyflow_session', id); 
       this.syncWithLocalStorage();
@@ -292,12 +294,12 @@ class StorageService {
       } catch (e) { return def; } 
   }
 
-  private set<T>(key: string, v: T, skipSync = false) { 
+  private set<T>(key: string, v: T, skipSync = false, silent = false) { 
       const k = this.k(key); 
       this.memoryCache[k] = v;
       localStorage.setItem(k, JSON.stringify(v));
       if (this.dbPromise) this.dbPromise.then(db => db.put('store', v, k));
-      notify(); 
+      if (!silent) notify(); 
       if (!skipSync) this.scheduleCloudPush(key); 
   }
   
@@ -318,6 +320,8 @@ class StorageService {
   // This ensures that if we edit offline, our newer timestamp wins against an older server timestamp.
   private restoreFullState(data: any) {
       if (!data) return;
+
+      const updates: Record<string, any> = {};
 
       const mergeList = (key: string, remoteList: any[]) => {
           if (!Array.isArray(remoteList)) return;
@@ -342,21 +346,19 @@ class StorageService {
                   merged.push(remote);
               } else if (local) {
                   // Item exists locally but not on remote.
-                  // If it was deleted on remote, we should probably delete it? 
-                  // But we don't track deletions yet. 
                   // For now, assume it's a new local item that hasn't synced.
                   merged.push(local);
               }
           });
           
-          this.set(key, merged, true);
+          updates[key] = merged;
       };
 
       const mergeObject = (key: string, remoteObj: any) => {
           if (!remoteObj) return;
           const localObj = this.get<any>(key, null);
           if (!localObj) {
-              this.set(key, remoteObj, true);
+              updates[key] = remoteObj;
               return;
           }
           
@@ -364,19 +366,16 @@ class StorageService {
           const remoteTime = remoteObj.updatedAt ? new Date(remoteObj.updatedAt).getTime() : 0;
           
           if (remoteTime >= localTime) {
-              this.set(key, remoteObj, true);
+              updates[key] = remoteObj;
           }
       };
 
       if(data.settings) mergeObject('settings', data.settings);
       if(data.profile) mergeObject('profile', data.profile);
       
-      // Special handling for Plan: Ensure it's not null
+      // Special handling for Plan
       if(data.plan) {
           mergeObject('plan', data.plan);
-      } else {
-          // If remote has no plan, but we have a local one, keep local.
-          // If neither has plan, we'll initialize one when getPlan is called.
       }
 
       if(data.accounts) mergeList('accounts', data.accounts);
@@ -385,6 +384,12 @@ class StorageService {
       if(data.goals) mergeList('goals', data.goals);
       if(data.importRules) mergeList('importRules', data.importRules);
       
+      // Apply all updates atomically (silent updates)
+      Object.entries(updates).forEach(([key, val]) => {
+          this.set(key, val, true, true);
+      });
+
+      // Single notify to update UI consistently
       notify();
   }
 

@@ -11,7 +11,7 @@ import { Reports } from './components/Reports';
 import { Planning } from './components/Planning';
 import { Auth } from './components/Auth';
 import { db, subscribe } from './services/storage';
-import { AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Loader2, Cloud } from 'lucide-react';
 
 interface ErrorBoundaryProps {
   children?: ReactNode;
@@ -86,14 +86,16 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 const AppContent: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(db.isLoggedIn());
   const [isReady, setIsReady] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(db.getSyncStatus());
 
   useEffect(() => {
     // Wait for DB init
     db.initPromise.then(() => setIsReady(true));
 
-    // Listen for login/logout events to update UI immediately
+    // Listen for login/logout events and sync status
     const unsubscribe = subscribe(() => {
       setIsAuthenticated(db.isLoggedIn());
+      setSyncStatus(db.getSyncStatus());
     });
     return () => unsubscribe();
   }, []);
@@ -124,6 +126,20 @@ const AppContent: React.FC = () => {
           <Route path="/import" element={<ImportExport />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        
+        {/* Global Sync Indicator */}
+        {syncStatus === 'SYNCING' && (
+            <div className="fixed bottom-4 right-4 bg-slate-900/90 backdrop-blur border border-slate-800 text-slate-300 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg z-50 animate-in slide-in-from-bottom-2">
+                <RefreshCw size={12} className="animate-spin text-emerald-500" />
+                Syncing...
+            </div>
+        )}
+        {syncStatus === 'ERROR' && (
+            <div className="fixed bottom-4 right-4 bg-rose-900/90 backdrop-blur border border-rose-800 text-rose-200 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg z-50 animate-in slide-in-from-bottom-2">
+                <Cloud size={12} className="text-rose-400" />
+                Sync Error
+            </div>
+        )}
       </Layout>
     </HashRouter>
   );
