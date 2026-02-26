@@ -198,6 +198,11 @@ class StorageService {
               if (u) {
                   this.setSession(u.uid);
                   this.setupRealtimeSync(u.uid);
+                  const hasData = await this.pullFromCloud();
+                  if (!hasData) {
+                      console.log("[MoneyFlow] Initializing Cloud Data...");
+                      await this.pushToCloud();
+                  }
               } else {
                   this.cleanupRealtimeSync();
               }
@@ -472,6 +477,8 @@ class StorageService {
   async pushToCloud() { 
       const id = this.getSession(); 
       if (id && rtdb) {
+          this.syncStatus = 'SYNCING';
+          notify();
           try {
              const userRef = ref(rtdb, `users/${id}`);
              const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
@@ -488,11 +495,16 @@ class StorageService {
                  await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
              }
              console.log("[MoneyFlow] Cloud Push Success");
-          } catch(e) { console.error("Cloud Push Failed", e); }
+             this.syncStatus = 'IDLE';
+          } catch(e) { 
+              console.error("Cloud Push Failed", e);
+              this.syncStatus = 'ERROR';
+          }
+          notify();
       }
   }
 
-  async pullFromCloud() { 
+  async pullFromCloud(): Promise<boolean> { 
       const id = this.getSession(); 
       if (id && rtdb) { 
           console.log(`[MoneyFlow] Force Pulling from Cloud for ${id}...`);
@@ -504,16 +516,23 @@ class StorageService {
             if (s.exists()) {
                 console.log("[MoneyFlow] Cloud Pull Success", Object.keys(s.val()));
                 this.restoreFullState(s.val()); 
+                this.syncStatus = 'IDLE';
+                notify();
+                return true;
             } else {
                 console.log("[MoneyFlow] Cloud Pull: No Data Found");
+                this.syncStatus = 'IDLE';
+                notify();
+                return false;
             }
-            this.syncStatus = 'IDLE';
           } catch(e) { 
               console.error("Cloud Pull Failed", e); 
               this.syncStatus = 'ERROR';
+              notify();
+              return false;
           }
-          notify();
       } 
+      return false;
   }
 
   async authenticateWithGoogle() { 
@@ -534,7 +553,10 @@ class StorageService {
         this.setSession(r.user.uid); 
         
         // Pull data first
-        await this.pullFromCloud(); 
+        const hasData = await this.pullFromCloud(); 
+        if (!hasData) {
+            await this.pushToCloud();
+        }
         
         // Update Profile from Google Data
         // Use full email as username fallback if display name is missing
@@ -578,7 +600,10 @@ class StorageService {
              if (email !== u) await this.migrateLocalData(email, cred.user.uid);
 
              this.setSession(cred.user.uid);
-             await this.pullFromCloud();
+             const hasData = await this.pullFromCloud();
+             if (!hasData) {
+                 await this.pushToCloud();
+             }
              
              // Ensure profile exists
              const currentProfile = this.get('profile', null);
@@ -706,11 +731,20 @@ class StorageService {
       let accs = this.get<Account[]>('accounts', []); 
       if (!Array.isArray(accs)) accs = [];
       const txs = this.getTransactions(); 
-      const nowStr = new Date().toISOString().split('T')[0];
+      // Use local date instead of UTC to ensure today's transactions are included regardless of timezone
+      const now = new Date();
+      const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      
       return accs.filter(a => a && !a.isDeleted).map(a => ({
           ...a,
           balance: this.calculateAccountBalanceAt(a, txs, nowStr)
       }));
+  }
+
+  async forceSync() {
+      await this.pullFromCloud();
+      await this.pushToCloud();
+      notify();
   }
 
   saveAccount(a: Account) { 
