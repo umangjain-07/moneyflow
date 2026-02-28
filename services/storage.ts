@@ -97,6 +97,7 @@ let rtdb: any = null, firebaseAuth: any = null;
 
 class StorageService {
   private pushTimer: any = null;
+  private syncTimeoutTimer: any = null;
   private dbPromise: Promise<IDBPDatabase> | null = null;
   private memoryCache: Record<string, any> = {};
   public initPromise: Promise<void>;
@@ -249,22 +250,63 @@ class StorageService {
               notify();
           }
       }, (error: any) => {
-          console.error("[MoneyFlow] Realtime Sync Warning", error);
-          // Do not set global ERROR, just log it. 
-          // The app works fine locally.
-          this.syncStatus = 'IDLE';
-          notify();
+          console.error("[MoneyFlow] Realtime Sync Error", error);
+          
+          // Check if error indicates Firebase is broken/unavailable
+          const errorCode = error?.code || error?.message || '';
+          const isFirebaseError = typeof errorCode === 'string' && (
+              errorCode.includes('permission-denied') ||
+              errorCode.includes('PERMISSION_DENIED') ||
+              errorCode.includes('unavailable') ||
+              errorCode.includes('network') ||
+              errorCode.includes('auth') ||
+              errorCode.includes('invalid-api-key') ||
+              errorCode.includes('project-not-found')
+          );
+          
+          if (isFirebaseError) {
+              console.warn("[MoneyFlow] Firebase error in realtime sync. Switching to offline mode.");
+              this.goOffline();
+          } else {
+              // Temporary error - just set to IDLE
+              this.syncStatus = 'IDLE';
+              notify();
+          }
       });
 
       // 2. Polling Fallback (Pull-based) - Every 10 seconds
       this.syncInterval = setInterval(async () => {
+          if (!rtdb) {
+              // rtdb became null, cleanup
+              this.cleanupRealtimeSync();
+              return;
+          }
+          
           try {
               const snapshot = await get(userRef);
               if (snapshot.exists()) {
                    this.restoreFullState(snapshot.val());
               }
-          } catch (e) {
+          } catch (e: any) {
               console.warn("[MoneyFlow] Polling Sync Failed", e);
+              
+              // Check if error indicates Firebase is broken/unavailable
+              const errorCode = e?.code || e?.message || '';
+              const isFirebaseError = typeof errorCode === 'string' && (
+                  errorCode.includes('permission-denied') ||
+                  errorCode.includes('PERMISSION_DENIED') ||
+                  errorCode.includes('unavailable') ||
+                  errorCode.includes('network') ||
+                  errorCode.includes('auth') ||
+                  errorCode.includes('invalid-api-key') ||
+                  errorCode.includes('project-not-found')
+              );
+              
+              if (isFirebaseError) {
+                  console.warn("[MoneyFlow] Firebase error in polling sync. Switching to offline mode.");
+                  this.cleanupRealtimeSync();
+                  this.goOffline();
+              }
           }
       }, 10000);
   }
@@ -484,71 +526,187 @@ class StorageService {
           // Debounce writes
           if (this.pushTimer) clearTimeout(this.pushTimer);
           this.pushTimer = setTimeout(() => this.pushToCloud(), 1000); // Reduced to 1s
+      } else if (!rtdb) {
+          // If rtdb is null, clear pending keys and ensure status is IDLE
+          this.pendingSyncKeys.clear();
+          if (this.syncStatus !== 'IDLE') {
+              this.syncStatus = 'IDLE';
+              notify();
+          }
       }
   }
 
   async pushToCloud() { 
       const id = this.getSession(); 
-      if (id && rtdb) {
-          this.syncStatus = 'SYNCING';
-          notify();
-          try {
-             const userRef = ref(rtdb, `users/${id}`);
-             const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
-             
-             // If we have specific keys, only update those
-             if (this.pendingSyncKeys.size > 0) {
-                 this.pendingSyncKeys.forEach(k => {
-                     updates[k] = this.get(k, null);
-                 });
-                 this.pendingSyncKeys.clear();
-                 await update(userRef, updates);
-             } else {
-                 // Fallback to full push if no keys tracked (shouldn't happen often)
-                 await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
-             }
-             console.log("[MoneyFlow] Cloud Push Success");
-             this.syncStatus = 'IDLE';
-          } catch(e) { 
-              console.error("Cloud Push Failed (Offline?)", e);
-              // Do not set ERROR status, as local save succeeded. 
-              // Just remain in IDLE state (effectively offline for this write).
+      
+      // Early return if no session or rtdb is unavailable
+      if (!id) {
+          this.pendingSyncKeys.clear();
+          if (this.syncStatus !== 'IDLE') {
+              this.syncStatus = 'IDLE';
+              notify();
+          }
+          return;
+      }
+      
+      if (!rtdb) {
+          // rtdb is null, we're in offline mode
+          this.pendingSyncKeys.clear();
+          if (this.syncStatus !== 'IDLE') {
+              this.syncStatus = 'IDLE';
+              notify();
+          }
+          return;
+      }
+      
+      this.syncStatus = 'SYNCING';
+      notify();
+      
+      // Safety timeout: if sync takes more than 30 seconds, reset to IDLE
+      if (this.syncTimeoutTimer) clearTimeout(this.syncTimeoutTimer);
+      this.syncTimeoutTimer = setTimeout(() => {
+          if (this.syncStatus === 'SYNCING') {
+              console.warn("[MoneyFlow] Sync timeout - resetting to IDLE");
+              this.syncStatus = 'IDLE';
+              notify();
+          }
+      }, 30000);
+      
+      try {
+         const userRef = ref(rtdb, `users/${id}`);
+         const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
+         
+         // If we have specific keys, only update those
+         if (this.pendingSyncKeys.size > 0) {
+             this.pendingSyncKeys.forEach(k => {
+                 updates[k] = this.get(k, null);
+             });
+             this.pendingSyncKeys.clear();
+             await update(userRef, updates);
+         } else {
+             // Fallback to full push if no keys tracked (shouldn't happen often)
+             await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
+         }
+         console.log("[MoneyFlow] Cloud Push Success");
+         if (this.syncTimeoutTimer) {
+             clearTimeout(this.syncTimeoutTimer);
+             this.syncTimeoutTimer = null;
+         }
+         this.syncStatus = 'IDLE';
+      } catch(e: any) {
+          if (this.syncTimeoutTimer) {
+              clearTimeout(this.syncTimeoutTimer);
+              this.syncTimeoutTimer = null;
+          } 
+          console.error("Cloud Push Failed", e);
+          
+          // Check if error indicates Firebase is broken/unavailable
+          const errorCode = e?.code || e?.message || '';
+          const isFirebaseError = typeof errorCode === 'string' && (
+              errorCode.includes('permission-denied') ||
+              errorCode.includes('PERMISSION_DENIED') ||
+              errorCode.includes('unavailable') ||
+              errorCode.includes('network') ||
+              errorCode.includes('auth') ||
+              errorCode.includes('invalid-api-key') ||
+              errorCode.includes('project-not-found')
+          );
+          
+          if (isFirebaseError) {
+              console.warn("[MoneyFlow] Firebase error detected during push. Switching to offline mode.");
+              this.goOffline();
+          } else {
+              // Temporary network error or other issue - stay in IDLE, don't go offline
               this.syncStatus = 'IDLE';
           }
-          notify();
       }
+      notify();
   }
 
   async pullFromCloud(): Promise<boolean> { 
       const id = this.getSession(); 
-      if (id && rtdb) { 
-          console.log(`[MoneyFlow] Force Pulling from Cloud for ${id}...`);
-          this.syncStatus = 'SYNCING';
-          notify();
-          try {
-            const userRef = ref(rtdb, `users/${id}`);
-            const s = await get(userRef); 
-            if (s.exists()) {
-                console.log("[MoneyFlow] Cloud Pull Success", Object.keys(s.val()));
-                this.restoreFullState(s.val()); 
-                this.syncStatus = 'IDLE';
-                notify();
-                return true;
-            } else {
-                console.log("[MoneyFlow] Cloud Pull: No Data Found");
-                this.syncStatus = 'IDLE';
-                notify();
-                return false;
-            }
-          } catch(e) { 
-              console.error("Cloud Pull Failed", e); 
-              // Fallback to local data
+      
+      if (!id) {
+          if (this.syncStatus !== 'IDLE') {
               this.syncStatus = 'IDLE';
               notify();
-              return false;
           }
-      } 
-      return false;
+          return false;
+      }
+      
+      if (!rtdb) {
+          if (this.syncStatus !== 'IDLE') {
+              this.syncStatus = 'IDLE';
+              notify();
+          }
+          return false;
+      }
+      
+      console.log(`[MoneyFlow] Force Pulling from Cloud for ${id}...`);
+      this.syncStatus = 'SYNCING';
+      notify();
+      
+      // Safety timeout: if sync takes more than 30 seconds, reset to IDLE
+      if (this.syncTimeoutTimer) clearTimeout(this.syncTimeoutTimer);
+      this.syncTimeoutTimer = setTimeout(() => {
+          if (this.syncStatus === 'SYNCING') {
+              console.warn("[MoneyFlow] Pull timeout - resetting to IDLE");
+              this.syncStatus = 'IDLE';
+              notify();
+          }
+      }, 30000);
+      
+      try {
+        const userRef = ref(rtdb, `users/${id}`);
+        const s = await get(userRef); 
+        if (s.exists()) {
+            console.log("[MoneyFlow] Cloud Pull Success", Object.keys(s.val()));
+            this.restoreFullState(s.val()); 
+            if (this.syncTimeoutTimer) {
+                clearTimeout(this.syncTimeoutTimer);
+                this.syncTimeoutTimer = null;
+            }
+            this.syncStatus = 'IDLE';
+            notify();
+            return true;
+        } else {
+            console.log("[MoneyFlow] Cloud Pull: No Data Found");
+            if (this.syncTimeoutTimer) {
+                clearTimeout(this.syncTimeoutTimer);
+                this.syncTimeoutTimer = null;
+            }
+            this.syncStatus = 'IDLE';
+            notify();
+            return false;
+        }
+      } catch(e: any) {
+          if (this.syncTimeoutTimer) {
+              clearTimeout(this.syncTimeoutTimer);
+              this.syncTimeoutTimer = null;
+          } 
+          console.error("Cloud Pull Failed", e);
+          
+          // Check if error indicates Firebase is broken/unavailable
+          const errorCode = e?.code || e?.message || '';
+          const isFirebaseError = typeof errorCode === 'string' && (
+              errorCode.includes('permission-denied') ||
+              errorCode.includes('PERMISSION_DENIED') ||
+              errorCode.includes('unavailable') ||
+              errorCode.includes('network') ||
+              errorCode.includes('auth') ||
+              errorCode.includes('invalid-api-key') ||
+              errorCode.includes('project-not-found')
+          );
+          
+          if (isFirebaseError) {
+              console.warn("[MoneyFlow] Firebase error detected during pull. Switching to offline mode.");
+              this.goOffline();
+          } else {
+              this.syncStatus = 'IDLE';
+          }
+          notify();
+          return false;
+      }
   }
 
   async authenticateWithGoogle() { 
