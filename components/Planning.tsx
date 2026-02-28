@@ -108,9 +108,28 @@ export const Planning: React.FC = () => {
   };
 
   useEffect(() => {
+    // Mark plan as being edited to prevent DB sync from overwriting local edits
+    db.startEditing('plan');
+    
     loadData();
-    const unsubscribe = subscribe(loadData);
-    return () => unsubscribe();
+    const unsubscribe = subscribe(() => {
+        // Only reload plan if we're not currently editing (i.e., after a save)
+        // This prevents DB sync from overwriting in-progress edits
+        if (!db.isEditing('plan')) {
+            loadData();
+        } else {
+            // Reload other data but keep plan state (don't overwrite in-progress edits)
+            setSettings(db.getSettings());
+            setCategories(db.getCategories());
+            setTransactions(db.getTransactions());
+            setAccounts(db.getAccounts());
+        }
+    });
+    return () => {
+        unsubscribe();
+        // Clean up: stop editing when component unmounts
+        db.stopEditing('plan');
+    };
   }, []);
 
   // 2. Selection Logic (Runs only when plan changes and selection is empty)

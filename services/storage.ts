@@ -100,6 +100,7 @@ class StorageService {
   private syncTimeoutTimer: any = null;
   private dbPromise: Promise<IDBPDatabase> | null = null;
   private memoryCache: Record<string, any> = {};
+  private editingKeys: Set<string> = new Set(); // Track keys currently being edited
   public initPromise: Promise<void>;
 
   constructor() { 
@@ -437,14 +438,36 @@ class StorageService {
       };
   }
 
+  // Mark a key as being edited (prevents sync from overwriting it)
+  public startEditing(key: string) {
+      this.editingKeys.add(key);
+  }
+
+  // Mark a key as no longer being edited (allows sync again)
+  public stopEditing(key: string) {
+      this.editingKeys.delete(key);
+  }
+
+  // Check if a key is currently being edited
+  public isEditing(key: string): boolean {
+      return this.editingKeys.has(key);
+  }
+
   // Smart Merge Strategy: Last-Write-Wins based on updatedAt
   // This ensures that if we edit offline, our newer timestamp wins against an older server timestamp.
+  // Also skips keys that are currently being edited to prevent overwriting in-progress edits.
   private restoreFullState(data: any) {
       if (!data) return;
 
       const updates: Record<string, any> = {};
 
       const mergeList = (key: string, remoteList: any[]) => {
+          // Skip if this key is currently being edited
+          if (this.editingKeys.has(key)) {
+              console.log(`[MoneyFlow] Skipping sync for '${key}' - currently being edited`);
+              return;
+          }
+          
           if (!Array.isArray(remoteList)) return;
           const localList = this.get<any[]>(key, []);
           const localMap = new Map(localList.map(i => [i.id, i]));
@@ -476,6 +499,12 @@ class StorageService {
       };
 
       const mergeObject = (key: string, remoteObj: any) => {
+          // Skip if this key is currently being edited
+          if (this.editingKeys.has(key)) {
+              console.log(`[MoneyFlow] Skipping sync for '${key}' - currently being edited`);
+              return;
+          }
+          
           if (!remoteObj) return;
           const localObj = this.get<any>(key, null);
           if (!localObj) {
@@ -1139,7 +1168,10 @@ class StorageService {
       }
       return p;
   }
-  savePlan(p: FinancialPlan) { this.set('plan', { ...p, updatedAt: new Date().toISOString() }); }
+  savePlan(p: FinancialPlan) { 
+      this.stopEditing('plan'); // Stop editing flag before saving
+      this.set('plan', { ...p, updatedAt: new Date().toISOString() }); 
+  }
 
   async resetEverything() { 
       const session = this.getSession();
