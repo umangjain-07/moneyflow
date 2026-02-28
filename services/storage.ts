@@ -211,6 +211,10 @@ class StorageService {
               } else {
                   this.cleanupRealtimeSync();
               }
+          }, (error: any) => {
+              // Handle auth state change errors gracefully
+              console.warn("[MoneyFlow] Auth state change error, continuing in local mode:", error);
+              this.goOffline();
           });
           console.log(`[MoneyFlow] Firebase Initialized. DB URL: ${FIREBASE_CONFIG.databaseURL}`);
       } catch (e) {
@@ -582,7 +586,7 @@ class StorageService {
         
         return true; 
       } catch (e: any) {
-          if (e.code === 'auth/invalid-api-key' || e.code === 'auth/configuration-not-found' || e.code === 'auth/project-not-found') {
+          if (e.code === 'auth/invalid-api-key' || e.code === 'auth/configuration-not-found' || e.code === 'auth/project-not-found' || e.code === 'auth/network-request-failed' || e.code === 'auth/api-key-not-valid' || e.code === 'auth/popup-closed-by-user') {
               console.error("Critical Firebase Config Error. Downgrading to local.");
               this.goOffline();
               return false;
@@ -627,31 +631,36 @@ class StorageService {
              return { success: true };
           } catch(e: any) {
              // Auto-downgrade on configuration errors to allow local usage
-             if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
+             const isConfigError = e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed' || e.code === 'auth/network-request-failed' || e.code === 'auth/api-key-not-valid';
+             
+             if (isConfigError) {
                  console.warn(`Firebase Config Error (${e.code}) detected during login. Downgrading to Local Mode.`);
                  this.goOffline();
-                 return this.login(u, p); // Retry as local
+                 // Fall through to local mode below
+             } else {
+                 // If Firebase is still available but login failed, return error
+                 if (firebaseAuth) {
+                     let msg = "Login failed.";
+                     if(e.code === 'auth/invalid-credential') msg = "Incorrect password or user not found.";
+                     if(e.code === 'auth/invalid-email') msg = "Invalid username format.";
+                     return { success: false, error: msg };
+                 }
              }
-             
-             let msg = "Login failed.";
-             if(e.code === 'auth/invalid-credential') msg = "Incorrect password or user not found.";
-             if(e.code === 'auth/invalid-email') msg = "Invalid username format.";
-             return { success: false, error: msg };
           }
-      } else {
-          // Local Fallback
-          // Normalize ID to lowercase to prevent duplicates, but keep display name
-          const id = u.toLowerCase();
-          this.setSession(id); 
-          
-          // Update profile if not exists or if we want to update it
-          const currentProfile = this.get('profile', null);
-          if (!currentProfile) {
-              this.set('profile', { username: u, updatedAt: new Date().toISOString() });
-          }
-          
-          return { success: true }; 
       }
+      
+      // Local Fallback - Always allow access (reached if firebaseAuth is null or Firebase failed)
+      // Normalize ID to lowercase to prevent duplicates, but keep display name
+      const id = u.toLowerCase();
+      this.setSession(id); 
+      
+      // Update profile if not exists or if we want to update it
+      const currentProfile = this.get('profile', null);
+      if (!currentProfile) {
+          this.set('profile', { username: u, updatedAt: new Date().toISOString() });
+      }
+      
+      return { success: true };
   }
 
   async register(u: string, p: string): Promise<{success: boolean, error?: string}> { 
@@ -675,26 +684,31 @@ class StorageService {
              await this.pushToCloud();
              return { success: true };
           } catch(e: any) {
-             // Auto-downgrade on configuration errors
-             if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
+             // Auto-downgrade on configuration errors to allow local usage
+             const isConfigError = e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed' || e.code === 'auth/network-request-failed' || e.code === 'auth/api-key-not-valid';
+             
+             if (isConfigError) {
                  console.warn(`Firebase Config Error (${e.code}) detected during register. Downgrading to Local Mode.`);
                  this.goOffline();
-                 return this.register(u, p); // Retry as local
+                 // Fall through to local mode below
+             } else {
+                 // If Firebase is still available but registration failed, return error
+                 if (firebaseAuth) {
+                     let msg = "Registration failed.";
+                     if(e.code === 'auth/email-already-in-use') msg = "Username already taken.";
+                     if(e.code === 'auth/weak-password') msg = "Password is too weak.";
+                     return { success: false, error: msg };
+                 }
              }
-
-             let msg = "Registration failed.";
-             if(e.code === 'auth/email-already-in-use') msg = "Username already taken.";
-             if(e.code === 'auth/weak-password') msg = "Password is too weak.";
-             return { success: false, error: msg };
           }
-      } else {
-          // Local Fallback
-          const id = u.toLowerCase();
-          this.setSession(id); 
-          this.set('settings', DEFAULT_SETTINGS); 
-          this.set('profile', { username: u });
-          return { success: true };
       }
+      
+      // Local Fallback - Always allow access (reached if firebaseAuth is null)
+      const id = u.toLowerCase();
+      this.setSession(id); 
+      this.set('settings', DEFAULT_SETTINGS); 
+      this.set('profile', { username: u, updatedAt: new Date().toISOString() });
+      return { success: true };
   }
 
   isLoggedIn() { return !!this.getSession(); }
