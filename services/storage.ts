@@ -179,35 +179,79 @@ class StorageService {
         return;
       }
 
-      // 2. Attempt Initialization
-      try {
-          // Sanitize databaseURL if user pasted the console URL
-          if (FIREBASE_CONFIG.databaseURL && FIREBASE_CONFIG.databaseURL.includes('console.firebase.google.com')) {
+      // 2. Sanitize and validate databaseURL
+      if (FIREBASE_CONFIG.databaseURL) {
+          // Remove quotes, whitespace, and trailing slashes
+          FIREBASE_CONFIG.databaseURL = FIREBASE_CONFIG.databaseURL.trim()
+              .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+              .replace(/\/$/, ''); // Remove trailing slash
+          
+          // Check if it looks like a console URL
+          if (FIREBASE_CONFIG.databaseURL.includes('console.firebase.google.com')) {
              console.warn("[MoneyFlow] Invalid databaseURL detected (looks like console URL). Attempting to infer correct URL...");
              // Try to construct standard URL from projectId if available
              if (FIREBASE_CONFIG.projectId) {
                  FIREBASE_CONFIG.databaseURL = `https://${FIREBASE_CONFIG.projectId}-default-rtdb.firebaseio.com`;
                  console.log(`[MoneyFlow] Inferred databaseURL: ${FIREBASE_CONFIG.databaseURL}`);
+             } else {
+                 FIREBASE_CONFIG.databaseURL = '';
              }
           }
+          
+          // Validate URL format
+          if (FIREBASE_CONFIG.databaseURL && !FIREBASE_CONFIG.databaseURL.match(/^https?:\/\/.+/)) {
+              console.warn("[MoneyFlow] Invalid databaseURL format. Attempting to construct from projectId...");
+              if (FIREBASE_CONFIG.projectId) {
+                  FIREBASE_CONFIG.databaseURL = `https://${FIREBASE_CONFIG.projectId}-default-rtdb.firebaseio.com`;
+              } else {
+                  FIREBASE_CONFIG.databaseURL = '';
+              }
+          }
+      } else if (FIREBASE_CONFIG.projectId) {
+          // If no databaseURL provided, try to construct it from projectId
+          FIREBASE_CONFIG.databaseURL = `https://${FIREBASE_CONFIG.projectId}-default-rtdb.firebaseio.com`;
+          console.log(`[MoneyFlow] Constructed databaseURL from projectId: ${FIREBASE_CONFIG.databaseURL}`);
+      }
 
+      // 3. Attempt Initialization
+      try {
           const app = initializeApp(FIREBASE_CONFIG);
           firebaseAuth = getAuth(app);
-          rtdb = getDatabase(app);
+          
+          // Only initialize database if URL is valid
+          if (FIREBASE_CONFIG.databaseURL && FIREBASE_CONFIG.databaseURL.length > 0) {
+              try {
+                  rtdb = getDatabase(app);
+                  console.log(`[MoneyFlow] Database initialized with URL: ${FIREBASE_CONFIG.databaseURL}`);
+              } catch (dbError: any) {
+                  console.error("[MoneyFlow] Database initialization failed:", dbError);
+                  // Continue without database - auth will still work
+                  rtdb = null;
+              }
+          } else {
+              console.warn("[MoneyFlow] No database URL configured. Running in auth-only mode.");
+              rtdb = null;
+          }
           
           onAuthStateChanged(firebaseAuth, async (u: any) => {
               if (u) {
                   this.setSession(u.uid);
-                  this.setupRealtimeSync(u.uid);
                   
-                  // 1. Pull from Cloud
-                  const hasData = await this.pullFromCloud();
-                  
-                  // 2. Always Sync Back (Merge Local -> Cloud)
-                  // This ensures that if we have local data (offline changes) or if cloud is empty,
-                  // the cloud gets updated with the latest resolved state.
-                  console.log("[MoneyFlow] Syncing resolved state back to Cloud...");
-                  await this.pushToCloud();
+                  // Only setup sync if database is available
+                  if (rtdb) {
+                      this.setupRealtimeSync(u.uid);
+                      
+                      // 1. Pull from Cloud
+                      const hasData = await this.pullFromCloud();
+                      
+                      // 2. Always Sync Back (Merge Local -> Cloud)
+                      // This ensures that if we have local data (offline changes) or if cloud is empty,
+                      // the cloud gets updated with the latest resolved state.
+                      console.log("[MoneyFlow] Syncing resolved state back to Cloud...");
+                      await this.pushToCloud();
+                  } else {
+                      console.log("[MoneyFlow] Database not available. Running in local-only mode.");
+                  }
                   
               } else {
                   this.cleanupRealtimeSync();
@@ -217,7 +261,7 @@ class StorageService {
               console.warn("[MoneyFlow] Auth state change error, continuing in local mode:", error);
               this.goOffline();
           });
-          console.log(`[MoneyFlow] Firebase Initialized. DB URL: ${FIREBASE_CONFIG.databaseURL}`);
+          console.log(`[MoneyFlow] Firebase Initialized. Auth: ${!!firebaseAuth}, Database: ${!!rtdb}, DB URL: ${FIREBASE_CONFIG.databaseURL || 'Not configured'}`);
       } catch (e) {
           console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
           this.goOffline();
@@ -230,49 +274,66 @@ class StorageService {
 
   private setupRealtimeSync(uid: string) {
       if (!rtdb) return;
+      
       const userRef = ref(rtdb, `users/${uid}`);
       
-      console.log(`[MoneyFlow] Setting up realtime sync for ${uid}`);
-      this.syncStatus = 'SYNCING';
-      notify();
+      try {
+          console.log(`[MoneyFlow] Setting up realtime sync for ${uid}`);
+          this.syncStatus = 'SYNCING';
+          notify();
 
-      // 1. Realtime Listener (Push-based)
-      this.syncUnsubscribe = onValue(userRef, (snapshot) => {
-          const data = snapshot.val();
-          if (data) {
-              console.log("[MoneyFlow] Realtime Update Received", Object.keys(data));
-              this.restoreFullState(data);
-              this.syncStatus = 'IDLE';
-              notify();
-          } else {
-              console.log("[MoneyFlow] Realtime Update: No Data (New User?)");
-              this.syncStatus = 'IDLE';
-              notify();
-          }
-      }, (error: any) => {
-          console.error("[MoneyFlow] Realtime Sync Error", error);
-          
-          // Check if error indicates Firebase is broken/unavailable
-          const errorCode = error?.code || error?.message || '';
-          const isFirebaseError = typeof errorCode === 'string' && (
-              errorCode.includes('permission-denied') ||
-              errorCode.includes('PERMISSION_DENIED') ||
-              errorCode.includes('unavailable') ||
-              errorCode.includes('network') ||
-              errorCode.includes('auth') ||
-              errorCode.includes('invalid-api-key') ||
-              errorCode.includes('project-not-found')
-          );
-          
-          if (isFirebaseError) {
-              console.warn("[MoneyFlow] Firebase error in realtime sync. Switching to offline mode.");
+          // 1. Realtime Listener (Push-based)
+          this.syncUnsubscribe = onValue(userRef, (snapshot) => {
+              const data = snapshot.val();
+              if (data) {
+                  console.log("[MoneyFlow] Realtime Update Received", Object.keys(data));
+                  this.restoreFullState(data);
+                  this.syncStatus = 'IDLE';
+                  notify();
+              } else {
+                  console.log("[MoneyFlow] Realtime Update: No Data (New User?)");
+                  this.syncStatus = 'IDLE';
+                  notify();
+              }
+          }, (error: any) => {
+              console.error("[MoneyFlow] Realtime Sync Error", error);
+              
+              // Check if error indicates Firebase is broken/unavailable
+              const errorCode = error?.code || error?.message || '';
+              const errorMessage = String(errorCode).toLowerCase();
+              const isFirebaseError = typeof errorCode === 'string' && (
+                  errorMessage.includes('permission-denied') ||
+                  errorMessage.includes('permission_denied') ||
+                  errorMessage.includes('unavailable') ||
+                  errorMessage.includes('network') ||
+                  errorMessage.includes('name_not_resolved') ||
+                  errorMessage.includes('err_name_not_resolved') ||
+                  errorMessage.includes('auth') ||
+                  errorMessage.includes('invalid-api-key') ||
+                  errorMessage.includes('project-not-found') ||
+                  errorMessage.includes('failed to fetch')
+              );
+              
+              if (isFirebaseError) {
+                  console.warn("[MoneyFlow] Firebase error in realtime sync. Switching to offline mode.");
+                  this.goOffline();
+              } else {
+                  // Temporary error - just set to IDLE
+                  this.syncStatus = 'IDLE';
+                  notify();
+              }
+          });
+      } catch (e: any) {
+          console.error("[MoneyFlow] Failed to setup realtime sync:", e);
+          const errorMessage = String(e?.message || e).toLowerCase();
+          if (errorMessage.includes('name_not_resolved') || errorMessage.includes('network')) {
+              console.warn("[MoneyFlow] Database connection failed. Switching to offline mode.");
               this.goOffline();
           } else {
-              // Temporary error - just set to IDLE
               this.syncStatus = 'IDLE';
               notify();
           }
-      });
+      }
 
       // 2. Polling Fallback (Pull-based) - Every 10 seconds
       this.syncInterval = setInterval(async () => {
@@ -602,14 +663,18 @@ class StorageService {
           
           // Check if error indicates Firebase is broken/unavailable
           const errorCode = e?.code || e?.message || '';
+          const errorMessage = String(errorCode).toLowerCase();
           const isFirebaseError = typeof errorCode === 'string' && (
-              errorCode.includes('permission-denied') ||
-              errorCode.includes('PERMISSION_DENIED') ||
-              errorCode.includes('unavailable') ||
-              errorCode.includes('network') ||
-              errorCode.includes('auth') ||
-              errorCode.includes('invalid-api-key') ||
-              errorCode.includes('project-not-found')
+              errorMessage.includes('permission-denied') ||
+              errorMessage.includes('permission_denied') ||
+              errorMessage.includes('unavailable') ||
+              errorMessage.includes('network') ||
+              errorMessage.includes('name_not_resolved') ||
+              errorMessage.includes('err_name_not_resolved') ||
+              errorMessage.includes('auth') ||
+              errorMessage.includes('invalid-api-key') ||
+              errorMessage.includes('project-not-found') ||
+              errorMessage.includes('failed to fetch')
           );
           
           if (isFirebaseError) {
@@ -688,14 +753,18 @@ class StorageService {
           
           // Check if error indicates Firebase is broken/unavailable
           const errorCode = e?.code || e?.message || '';
+          const errorMessage = String(errorCode).toLowerCase();
           const isFirebaseError = typeof errorCode === 'string' && (
-              errorCode.includes('permission-denied') ||
-              errorCode.includes('PERMISSION_DENIED') ||
-              errorCode.includes('unavailable') ||
-              errorCode.includes('network') ||
-              errorCode.includes('auth') ||
-              errorCode.includes('invalid-api-key') ||
-              errorCode.includes('project-not-found')
+              errorMessage.includes('permission-denied') ||
+              errorMessage.includes('permission_denied') ||
+              errorMessage.includes('unavailable') ||
+              errorMessage.includes('network') ||
+              errorMessage.includes('name_not_resolved') ||
+              errorMessage.includes('err_name_not_resolved') ||
+              errorMessage.includes('auth') ||
+              errorMessage.includes('invalid-api-key') ||
+              errorMessage.includes('project-not-found') ||
+              errorMessage.includes('failed to fetch')
           );
           
           if (isFirebaseError) {
