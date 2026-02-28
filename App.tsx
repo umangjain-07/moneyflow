@@ -135,9 +135,18 @@ const AppContent: React.FC = () => {
             </div>
         )}
         {syncStatus === 'ERROR' && (
-            <div className="fixed bottom-4 right-4 bg-rose-900/90 backdrop-blur border border-rose-800 text-rose-200 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg z-50 animate-in slide-in-from-bottom-2">
-                <Cloud size={12} className="text-rose-400" />
-                Sync Error
+            <div className="fixed bottom-4 right-4 flex flex-col items-end gap-2 z-50 animate-in slide-in-from-bottom-2">
+                <div className="bg-rose-900/90 backdrop-blur border border-rose-800 text-rose-200 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg">
+                    <Cloud size={12} className="text-rose-400" />
+                    Sync Error
+                </div>
+                <button 
+                    onClick={() => db.goOffline()}
+                    className="bg-slate-800/90 backdrop-blur border border-slate-700 text-slate-300 px-3 py-2 rounded-full text-xs font-bold hover:bg-slate-700 transition-colors shadow-lg flex items-center gap-2"
+                >
+                    <RefreshCw size={12} className="text-slate-500" />
+                    Switch to Offline Mode
+                </button>
             </div>
         )}
       </Layout>

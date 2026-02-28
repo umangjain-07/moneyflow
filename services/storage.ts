@@ -174,7 +174,7 @@ class StorageService {
 
       if (invalidKeys.length > 0) {
         console.warn(`[MoneyFlow] Firebase Config Incomplete. Missing: ${invalidKeys.join(', ')}. Switching to LOCAL OFFLINE MODE.`);
-        this.downgradeToLocal();
+        this.goOffline();
         return;
       }
 
@@ -198,19 +198,24 @@ class StorageService {
               if (u) {
                   this.setSession(u.uid);
                   this.setupRealtimeSync(u.uid);
+                  
+                  // 1. Pull from Cloud
                   const hasData = await this.pullFromCloud();
-                  if (!hasData) {
-                      console.log("[MoneyFlow] Initializing Cloud Data...");
-                      await this.pushToCloud();
-                  }
+                  
+                  // 2. Always Sync Back (Merge Local -> Cloud)
+                  // This ensures that if we have local data (offline changes) or if cloud is empty,
+                  // the cloud gets updated with the latest resolved state.
+                  console.log("[MoneyFlow] Syncing resolved state back to Cloud...");
+                  await this.pushToCloud();
+                  
               } else {
                   this.cleanupRealtimeSync();
               }
           });
-          console.log("[MoneyFlow] Firebase Initialized. Realtime Sync Active.");
+          console.log(`[MoneyFlow] Firebase Initialized. DB URL: ${FIREBASE_CONFIG.databaseURL}`);
       } catch (e) {
           console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
-          this.downgradeToLocal();
+          this.goOffline();
       }
   }
 
@@ -240,8 +245,10 @@ class StorageService {
               notify();
           }
       }, (error: any) => {
-          console.error("[MoneyFlow] Realtime Sync Error", error);
-          this.syncStatus = 'ERROR';
+          console.error("[MoneyFlow] Realtime Sync Warning", error);
+          // Do not set global ERROR, just log it. 
+          // The app works fine locally.
+          this.syncStatus = 'IDLE';
           notify();
       });
 
@@ -269,10 +276,12 @@ class StorageService {
       }
   }
 
-  private downgradeToLocal() {
+  public goOffline() {
       firebaseAuth = null;
       rtdb = null;
+      this.syncStatus = 'IDLE';
       notify();
+      console.log("[MoneyFlow] Switched to Offline Mode");
   }
 
   getSyncStatus() { return this.syncStatus; }
@@ -497,8 +506,10 @@ class StorageService {
              console.log("[MoneyFlow] Cloud Push Success");
              this.syncStatus = 'IDLE';
           } catch(e) { 
-              console.error("Cloud Push Failed", e);
-              this.syncStatus = 'ERROR';
+              console.error("Cloud Push Failed (Offline?)", e);
+              // Do not set ERROR status, as local save succeeded. 
+              // Just remain in IDLE state (effectively offline for this write).
+              this.syncStatus = 'IDLE';
           }
           notify();
       }
@@ -527,7 +538,8 @@ class StorageService {
             }
           } catch(e) { 
               console.error("Cloud Pull Failed", e); 
-              this.syncStatus = 'ERROR';
+              // Fallback to local data
+              this.syncStatus = 'IDLE';
               notify();
               return false;
           }
@@ -572,7 +584,7 @@ class StorageService {
       } catch (e: any) {
           if (e.code === 'auth/invalid-api-key' || e.code === 'auth/configuration-not-found' || e.code === 'auth/project-not-found') {
               console.error("Critical Firebase Config Error. Downgrading to local.");
-              this.downgradeToLocal();
+              this.goOffline();
               return false;
           }
           throw e;
@@ -617,7 +629,7 @@ class StorageService {
              // Auto-downgrade on configuration errors to allow local usage
              if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
                  console.warn(`Firebase Config Error (${e.code}) detected during login. Downgrading to Local Mode.`);
-                 this.downgradeToLocal();
+                 this.goOffline();
                  return this.login(u, p); // Retry as local
              }
              
@@ -666,7 +678,7 @@ class StorageService {
              // Auto-downgrade on configuration errors
              if (e.code === 'auth/invalid-api-key' || e.code === 'auth/internal-error' || e.code === 'auth/project-not-found' || e.code === 'auth/operation-not-allowed') {
                  console.warn(`Firebase Config Error (${e.code}) detected during register. Downgrading to Local Mode.`);
-                 this.downgradeToLocal();
+                 this.goOffline();
                  return this.register(u, p); // Retry as local
              }
 
