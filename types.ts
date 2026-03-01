@@ -33,6 +33,7 @@ export interface Category {
   color?: string;
   icon?: string;
   defaultFrequency?: 'DAILY' | 'MONTHLY_ONCE' | 'MONTHLY_NET' | 'YEARLY';
+  defaultInvestmentSubtype?: 'SELF' | 'SPONSORED';
   updatedAt?: string;
   isDeleted?: boolean;
 }
@@ -47,6 +48,7 @@ export interface Transaction {
   type: TransactionType;
   relatedTransactionId?: string;
   tags?: string[];
+  investmentSubtype?: 'SELF' | 'SPONSORED';
   updatedAt?: string;
   isDeleted?: boolean;
 }
@@ -149,4 +151,4 @@ export interface AiInsight {
   title: string;
   description: string;
   type: 'TIP' | 'WARNING' | 'OPPORTUNITY';
-}
+} 

@@ -132,7 +132,8 @@ export const Transactions: React.FC = () => {
     categoryId: '',
     accountId: '',
     toAccountId: '', 
-    tags: '' 
+    tags: '',
+    investmentSubtype: 'SELF' as 'SELF' | 'SPONSORED'
   });
 
   const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -174,7 +175,15 @@ export const Transactions: React.FC = () => {
       const validCats = categories.filter(c => c.type === mode);
       const currentCat = categories.find(c => c.id === formData.categoryId);
       if (!currentCat || currentCat.type !== mode) {
-          setFormData(prev => ({ ...prev, categoryId: validCats[0]?.id || '' }));
+          const newCatId = validCats[0]?.id || '';
+          const newCat = categories.find(c => c.id === newCatId);
+          setFormData(prev => ({ 
+            ...prev, 
+            categoryId: newCatId,
+            investmentSubtype: mode === 'INVESTMENT' ? (newCat?.defaultInvestmentSubtype || 'SELF') : prev.investmentSubtype
+          }));
+      } else if (mode === 'INVESTMENT' && currentCat.defaultInvestmentSubtype) {
+          setFormData(prev => ({ ...prev, investmentSubtype: currentCat.defaultInvestmentSubtype || 'SELF' }));
       }
   }, [mode, categories, editingId]);
 
@@ -188,7 +197,8 @@ export const Transactions: React.FC = () => {
         categoryId: '',
         accountId: accounts[0]?.id || '',
         toAccountId: '',
-        tags: ''
+        tags: '',
+        investmentSubtype: 'SELF'
       });
       setIsModalOpen(true);
   };
@@ -216,7 +226,8 @@ export const Transactions: React.FC = () => {
           categoryId: tx.categoryId,
           accountId: tx.accountId,
           toAccountId: toAcc,
-          tags: tx.tags?.join(', ') || ''
+          tags: tx.tags?.join(', ') || '',
+          investmentSubtype: tx.investmentSubtype || 'SELF'
       });
       setIsModalOpen(true);
   };
@@ -249,12 +260,13 @@ export const Transactions: React.FC = () => {
         categoryId: catId,
         accountId: formData.accountId,
         type: mode,
-        tags: tagsArray
+        tags: tagsArray,
+        investmentSubtype: mode === 'INVESTMENT' ? formData.investmentSubtype : undefined
       });
     }
 
     setIsModalOpen(false);
-    setFormData({ amount: '', description: '', date: new Date().toISOString().split('T')[0], categoryId: '', accountId: '', toAccountId: '', tags: '' });
+    setFormData({ amount: '', description: '', date: new Date().toISOString().split('T')[0], categoryId: '', accountId: '', toAccountId: '', tags: '', investmentSubtype: 'SELF' });
   };
 
   const handleDelete = (id: string) => {
@@ -470,23 +482,54 @@ export const Transactions: React.FC = () => {
                     </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Vessel</label>
-                        <div className="relative">
-                            <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.accountId} onChange={e => setFormData({...formData, accountId: e.target.value})}>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                <div className="space-y-4">
+                    {mode === 'INVESTMENT' && (
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Investment Type</label>
+                            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner">
+                                <button 
+                                    onClick={() => setFormData({...formData, investmentSubtype: 'SELF'})}
+                                    className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SELF' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                                >
+                                    SELF
+                                </button>
+                                <button 
+                                    onClick={() => setFormData({...formData, investmentSubtype: 'SPONSORED'})}
+                                    className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SPONSORED' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                                >
+                                    SPONSORED
+                                </button>
+                            </div>
+                            <p className="text-[9px] text-slate-600 mt-1 ml-1">
+                                {formData.investmentSubtype === 'SELF' ? 'Money deducted from account' : 'No money deducted, investment added directly'}
+                            </p>
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Classification</label>
-                        <div className="relative">
-                            <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.categoryId} onChange={e => setFormData({...formData, categoryId: e.target.value})}>
-                                {categories.filter(c => c.type === mode).map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                    )}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Vessel</label>
+                            <div className="relative">
+                                <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.accountId} onChange={e => setFormData({...formData, accountId: e.target.value})}>
+                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Classification</label>
+                            <div className="relative">
+                                <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.categoryId} onChange={e => {
+                                    const selectedCat = categories.find(c => c.id === e.target.value);
+                                    setFormData({
+                                        ...formData, 
+                                        categoryId: e.target.value,
+                                        investmentSubtype: mode === 'INVESTMENT' ? (selectedCat?.defaultInvestmentSubtype || 'SELF') : formData.investmentSubtype
+                                    });
+                                }}>
+                                    {categories.filter(c => c.type === mode).map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -41,7 +41,7 @@ export const Categories: React.FC = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
   const [formData, setFormData] = useState<Partial<Category>>({
-    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET'
+    name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET', defaultInvestmentSubtype: 'SELF'
   });
 
   // Merge State
@@ -62,8 +62,8 @@ export const Categories: React.FC = () => {
   }, []);
 
   const handleOpenEdit = (category?: Category) => {
-    if (category) setFormData({ ...category });
-    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET' });
+    if (category) setFormData({ ...category, defaultInvestmentSubtype: category.defaultInvestmentSubtype || 'SELF' });
+    else setFormData({ name: '', group: 'General', type: 'EXPENSE', necessity: 'WANT', color: '#3B82F6', icon: '🏷️', defaultFrequency: 'MONTHLY_NET', defaultInvestmentSubtype: 'SELF' });
     setIsEditModalOpen(true);
     setShowEmojiPicker(false);
   };
@@ -427,6 +427,30 @@ export const Categories: React.FC = () => {
                           </div>
                           <p className="text-[10px] text-slate-600 mt-2 italic">* Used as default setting in Planning mode</p>
                       </div>
+
+                      {/* INVESTMENT SUBTYPE SELECTOR */}
+                      {formData.type === 'INVESTMENT' && (
+                          <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Default Investment Type</label>
+                              <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner">
+                                  <button 
+                                      onClick={() => setFormData({...formData, defaultInvestmentSubtype: 'SELF'})}
+                                      className={`flex-1 py-3 rounded-xl text-xs font-bold uppercase transition-all ${formData.defaultInvestmentSubtype === 'SELF' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                                  >
+                                      SELF
+                                  </button>
+                                  <button 
+                                      onClick={() => setFormData({...formData, defaultInvestmentSubtype: 'SPONSORED'})}
+                                      className={`flex-1 py-3 rounded-xl text-xs font-bold uppercase transition-all ${formData.defaultInvestmentSubtype === 'SPONSORED' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                                  >
+                                      SPONSORED
+                                  </button>
+                              </div>
+                              <p className="text-[9px] text-slate-600 mt-1">
+                                  {formData.defaultInvestmentSubtype === 'SELF' ? 'Default: Money deducted from account' : 'Default: No money deducted, investment added directly'}
+                              </p>
+                          </div>
+                      )}
                       
                       <div className="pt-4 border-t border-slate-800 flex gap-4">
                           {analysisTarget?.type === 'CATEGORY' && (<button onClick={()=>db.deleteCategory(analysisTarget.id)} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-500/20 transition-all"><Trash2 size={20}/></button>)}

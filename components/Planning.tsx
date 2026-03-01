@@ -108,9 +108,6 @@ export const Planning: React.FC = () => {
   };
 
   useEffect(() => {
-    // Mark plan as being edited to prevent DB sync from overwriting local edits
-    db.startEditing('plan');
-    
     loadData();
     const unsubscribe = subscribe(() => {
         // Only reload plan if we're not currently editing (i.e., after a save)
@@ -311,6 +308,8 @@ export const Planning: React.FC = () => {
 
   const handleSaveDraft = () => {
       if (!plan || !draftTemplate) return;
+      // Stop editing before saving - this allows sync to happen
+      db.stopEditing('plan');
       const updatedTemplates = plan.budgetTemplates?.map(t => 
           t.id === draftTemplate.id ? { ...draftTemplate, name: draftName } : t
       ) || [];
@@ -344,6 +343,8 @@ export const Planning: React.FC = () => {
 
   const handleConfigChange = (catId: string, field: keyof CategoryBudgetConfig, value: any) => {
       if (!draftTemplate) return;
+      // Mark plan as being edited when any changes are made
+      db.startEditing('plan');
       setDraftTemplate({
           ...draftTemplate,
           configs: draftTemplate.configs.map(c => c.categoryId === catId ? { ...c, [field]: value } : c)
@@ -352,6 +353,8 @@ export const Planning: React.FC = () => {
 
   const handlePeriodToggle = (catId: string) => {
     if (!draftTemplate) return;
+    // Mark as editing when toggling period
+    db.startEditing('plan');
     const conf = draftTemplate.configs.find(c => c.categoryId === catId);
     if(!conf) return;
     const next = conf.period === 'DAILY' ? 'MONTHLY_NET' :
@@ -1032,7 +1035,10 @@ export const Planning: React.FC = () => {
                                     <input 
                                         type="text" 
                                         value={draftName}
-                                        onChange={e => setDraftName(e.target.value)}
+                                        onChange={e => {
+                                            db.startEditing('plan');
+                                            setDraftName(e.target.value);
+                                        }}
                                         className="bg-transparent text-lg font-bold text-white outline-none border-b border-transparent focus:border-slate-600 transition-all placeholder:text-slate-600 min-w-0"
                                         placeholder="Plan Name"
                                     />
@@ -1060,11 +1066,17 @@ export const Planning: React.FC = () => {
                             <div className="p-6 border-b border-slate-800 grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Monthly Income</label>
-                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.salary} onChange={e => setDraftTemplate({...draftTemplate, salary: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-white font-mono text-sm outline-none focus:border-blue-500/50" /></div>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.salary} onChange={e => {
+                                        db.startEditing('plan');
+                                        setDraftTemplate({...draftTemplate, salary: parseFloat(e.target.value)||0});
+                                    }} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-white font-mono text-sm outline-none focus:border-blue-500/50" /></div>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Savings Target</label>
-                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.savingsGoal} onChange={e => setDraftTemplate({...draftTemplate, savingsGoal: parseFloat(e.target.value)||0})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-emerald-400 font-mono text-sm outline-none focus:border-emerald-500/50" /></div>
+                                    <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">{settings.currencySymbol}</span><input type="number" value={draftTemplate.savingsGoal} onChange={e => {
+                                        db.startEditing('plan');
+                                        setDraftTemplate({...draftTemplate, savingsGoal: parseFloat(e.target.value)||0});
+                                    }} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 pl-7 text-emerald-400 font-mono text-sm outline-none focus:border-emerald-500/50" /></div>
                                 </div>
                             </div>
 

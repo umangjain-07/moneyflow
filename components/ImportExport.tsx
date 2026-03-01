@@ -22,6 +22,7 @@ interface ClassificationItem {
     newNecessity: 'NEED' | 'WANT';
     newGroup: string;
     newIcon: string;
+    investmentSubtype?: 'SELF' | 'SPONSORED';
 }
 
 const getHeuristicCategory = (keyword: string): { type: 'INCOME' | 'EXPENSE' | 'INVESTMENT', necessity: 'NEED'|'WANT', group: string } | null => {
@@ -258,7 +259,8 @@ export const ImportExport: React.FC = () => {
             newType: defaultType,
             newNecessity: matchingCat?.necessity || heuristic?.necessity || db.guessNecessity(keyword),
             newGroup: matchingCat?.group || heuristic?.group || 'General',
-            newIcon: matchingCat?.icon || getAutoEmoji(keyword)
+            newIcon: matchingCat?.icon || getAutoEmoji(keyword),
+            investmentSubtype: defaultType === 'INVESTMENT' ? (matchingCat?.defaultInvestmentSubtype || 'SELF') : undefined
         });
     });
     setClassifications(newClassifications.sort((a, b) => b.count - a.count));
@@ -348,7 +350,8 @@ export const ImportExport: React.FC = () => {
             newType: safeType,
             newNecessity: suggestion.necessity,
             newGroup: suggestion.group,
-            newIcon: matchingCat?.icon || getAutoEmoji(c.keyword)
+            newIcon: matchingCat?.icon || getAutoEmoji(c.keyword),
+            investmentSubtype: safeType === 'INVESTMENT' ? (matchingCat?.defaultInvestmentSubtype || c.investmentSubtype || 'SELF') : c.investmentSubtype
           };
         }
         return c;
@@ -395,11 +398,14 @@ export const ImportExport: React.FC = () => {
               dateStr = isNaN(d.getTime()) ? new Date().toISOString().split('T')[0] : d.toISOString().split('T')[0];
           } catch(e) { dateStr = new Date().toISOString().split('T')[0]; }
 
+          const matchedItem = classifications.find(item => item.keyword === keyword);
           return {
               accountId: targetAccount, amount: Math.abs(signedAmt),
               date: dateStr,
               description: String(row[map.desc] || rawSource),
-              categoryId: matchedCatId, type: targetCat?.type || (signedAmt >= 0 ? 'INCOME' : 'EXPENSE')
+              categoryId: matchedCatId, 
+              type: targetCat?.type || (signedAmt >= 0 ? 'INCOME' : 'EXPENSE'),
+              investmentSubtype: targetCat?.type === 'INVESTMENT' ? (matchedItem?.investmentSubtype || targetCat?.defaultInvestmentSubtype || 'SELF') : undefined
           };
       }).filter(Boolean) as any;
 
@@ -657,6 +663,9 @@ export const ImportExport: React.FC = () => {
                                                     newItem.newType = cat.type;
                                                     newItem.newNecessity = cat.necessity || 'WANT';
                                                     newItem.newIcon = cat.icon || '🏷️';
+                                                    if (cat.type === 'INVESTMENT') {
+                                                        newItem.investmentSubtype = cat.defaultInvestmentSubtype || 'SELF';
+                                                    }
                                                 }
                                             }
                                             const newClass = [...classifications];
@@ -680,6 +689,12 @@ export const ImportExport: React.FC = () => {
                                             onClick={() => {
                                                 const newClass = [...classifications];
                                                 newClass[idx].newType = t;
+                                                if (t === 'INVESTMENT') {
+                                                    const cat = categories.find(c => c.id === newClass[idx].targetCategoryId);
+                                                    newClass[idx].investmentSubtype = cat?.defaultInvestmentSubtype || 'SELF';
+                                                } else {
+                                                    newClass[idx].investmentSubtype = undefined;
+                                                }
                                                 setClassifications(newClass);
                                             }}
                                             className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newType === t ? (t === 'INCOME' ? 'bg-emerald-500 text-slate-950' : t === 'INVESTMENT' ? 'bg-purple-500 text-white' : 'bg-rose-500 text-white') : 'text-slate-500 hover:text-slate-300'}`}
@@ -693,6 +708,31 @@ export const ImportExport: React.FC = () => {
                                     <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
                                         <button onClick={() => { const nc = [...classifications]; nc[idx].newNecessity = 'NEED'; setClassifications(nc); }} className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newNecessity === 'NEED' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Need</button>
                                         <button onClick={() => { const nc = [...classifications]; nc[idx].newNecessity = 'WANT'; setClassifications(nc); }} className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.newNecessity === 'WANT' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Want</button>
+                                    </div>
+                                )}
+
+                                {item.newType === 'INVESTMENT' && (
+                                    <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                                        <button 
+                                            onClick={() => { 
+                                                const nc = [...classifications]; 
+                                                nc[idx].investmentSubtype = 'SELF'; 
+                                                setClassifications(nc); 
+                                            }} 
+                                            className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${(item.investmentSubtype || 'SELF') === 'SELF' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}
+                                        >
+                                            Self
+                                        </button>
+                                        <button 
+                                            onClick={() => { 
+                                                const nc = [...classifications]; 
+                                                nc[idx].investmentSubtype = 'SPONSORED'; 
+                                                setClassifications(nc); 
+                                            }} 
+                                            className={`px-2 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${item.investmentSubtype === 'SPONSORED' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}
+                                        >
+                                            Sponsored
+                                        </button>
                                     </div>
                                 )}
                           </div>

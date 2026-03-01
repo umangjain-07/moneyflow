@@ -610,6 +610,12 @@ class StorageService {
   private pendingSyncKeys: Set<string> = new Set();
 
   private scheduleCloudPush(key?: string) { 
+      // Don't sync if this key is being edited
+      if (key && this.editingKeys.has(key)) {
+          console.log(`[MoneyFlow] Skipping cloud push for '${key}' - currently being edited`);
+          return;
+      }
+      
       if (key) this.pendingSyncKeys.add(key);
       
       if (rtdb && this.getSession()) {
@@ -1004,7 +1010,13 @@ class StorageService {
       if (!Array.isArray(transactions)) return b; // Safety check
       transactions.filter(t => t.accountId === account.id && t.date <= endDate).forEach(t => {
           if (t.type === 'INCOME') b += t.amount;
-          else if (t.type === 'EXPENSE' || t.type === 'INVESTMENT') b -= t.amount;
+          else if (t.type === 'EXPENSE') b -= t.amount;
+          else if (t.type === 'INVESTMENT') {
+              // Only subtract for self investments, sponsored investments don't affect balance
+              if (t.investmentSubtype !== 'SPONSORED') {
+                  b -= t.amount;
+              }
+          }
       });
       return b;
   }
@@ -1169,7 +1181,8 @@ class StorageService {
       return p;
   }
   savePlan(p: FinancialPlan) { 
-      this.stopEditing('plan'); // Stop editing flag before saving
+      // Note: stopEditing should be called by the component before calling savePlan
+      // This allows the component to control when editing stops
       this.set('plan', { ...p, updatedAt: new Date().toISOString() }); 
   }
 
