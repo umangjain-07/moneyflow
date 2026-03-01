@@ -63,6 +63,14 @@ export const Planning: React.FC = () => {
       return `${y}-${m}-${day}`;
   };
 
+  const formatLocalDate = (date: Date): string => {
+      // Format date as YYYY-MM-DD using local time (not UTC)
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+  };
+
   // 1. Data Loading (Pure Data Fetching, No UI State Side Effects)
   const loadData = () => {
     setSettings(db.getSettings());
@@ -722,12 +730,18 @@ export const Planning: React.FC = () => {
       let budgetMultiplier = 1;
 
       if (dashboardView === 'MONTH') {
-          startOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1).toISOString().split('T')[0];
-          endOfPeriod = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0).toISOString().split('T')[0];
+          // Always start from day 1 of the month and end at the last day of the month (using local time)
+          const startDate = new Date(historyDate.getFullYear(), historyDate.getMonth(), 1);
+          const endDate = new Date(historyDate.getFullYear(), historyDate.getMonth() + 1, 0);
+          startOfPeriod = formatLocalDate(startDate);
+          endOfPeriod = formatLocalDate(endDate);
           budgetMultiplier = 1;
       } else if (dashboardView === 'YEAR') {
-          startOfPeriod = new Date(historyDate.getFullYear(), 0, 1).toISOString().split('T')[0];
-          endOfPeriod = new Date(historyDate.getFullYear(), 11, 31).toISOString().split('T')[0];
+          // Always start from day 1 of January and end at the last day of December (using local time)
+          const startDate = new Date(historyDate.getFullYear(), 0, 1);
+          const endDate = new Date(historyDate.getFullYear(), 11, 31);
+          startOfPeriod = formatLocalDate(startDate);
+          endOfPeriod = formatLocalDate(endDate);
           budgetMultiplier = 12;
       } else {
           // ALL TIME
