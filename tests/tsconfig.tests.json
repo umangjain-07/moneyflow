@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "ES2020",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "noEmit": false,
+    "rootDir": "..",
+    "outDir": "../.tmp-test-build",
+    "skipLibCheck": true
+  },
+  "include": [
+    "../services/firebase/**/*.ts",
+    "./**/*.ts"
+  ]
+}

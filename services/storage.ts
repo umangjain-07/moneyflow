@@ -5,8 +5,9 @@ import { openDB, IDBPDatabase } from 'idb';
 import { initializeApp } from 'firebase/app';
 // @ts-ignore
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-// @ts-ignore
-import { getDatabase, ref, set, onValue, get, child, update, off } from 'firebase/database';
+import { FirebaseCrudModule } from './firebase/FirebaseCrudModule';
+import { FirebaseRealtimeAdapter } from './firebase/FirebaseRealtimeAdapter';
+import { FirebaseUserStateRepository } from './firebase/FirebaseUserStateRepository';
 
 // Helper to safely access environment variables in various environments (Vite, CRA, Node)
 export const getEnv = (key: string): string => {
@@ -93,13 +94,17 @@ export const getAutoEmoji = (name: string): string => {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-let rtdb: any = null, firebaseAuth: any = null;
+let firebaseAuth: any = null;
 
 class StorageService {
   private pushTimer: any = null;
   private syncTimeoutTimer: any = null;
   private dbPromise: Promise<IDBPDatabase> | null = null;
   private memoryCache: Record<string, any> = {};
+    private cloudRepository: FirebaseUserStateRepository | null = null;
+    private pendingLocalChanges: Record<string, { value: any; version: number }> = {};
+    private syncInProgress = false;
+    private syncQueued = false;
   private editingKeys: Set<string> = new Set(); // Track keys currently being edited
   public initPromise: Promise<void>;
 
@@ -222,16 +227,18 @@ class StorageService {
           // Only initialize database if URL is valid
           if (FIREBASE_CONFIG.databaseURL && FIREBASE_CONFIG.databaseURL.length > 0) {
               try {
-                  rtdb = getDatabase(app);
+                  const firebaseAdapter = new FirebaseRealtimeAdapter(app);
+                  const firebaseCrud = new FirebaseCrudModule(firebaseAdapter);
+                  this.cloudRepository = new FirebaseUserStateRepository(firebaseCrud);
                   console.log(`[MoneyFlow] Database initialized with URL: ${FIREBASE_CONFIG.databaseURL}`);
               } catch (dbError: any) {
                   console.error("[MoneyFlow] Database initialization failed:", dbError);
                   // Continue without database - auth will still work
-                  rtdb = null;
+                  this.cloudRepository = null;
               }
           } else {
               console.warn("[MoneyFlow] No database URL configured. Running in auth-only mode.");
-              rtdb = null;
+              this.cloudRepository = null;
           }
           
           onAuthStateChanged(firebaseAuth, async (u: any) => {
@@ -239,15 +246,10 @@ class StorageService {
                   this.setSession(u.uid);
                   
                   // Only setup sync if database is available
-                  if (rtdb) {
+                  if (this.cloudRepository) {
                       this.setupRealtimeSync(u.uid);
-                      
-                      // 1. Pull from Cloud
-                      const hasData = await this.pullFromCloud();
-                      
-                      // 2. Always Sync Back (Merge Local -> Cloud)
-                      // This ensures that if we have local data (offline changes) or if cloud is empty,
-                      // the cloud gets updated with the latest resolved state.
+
+                      // Pull first, then apply local changes and push back.
                       console.log("[MoneyFlow] Syncing resolved state back to Cloud...");
                       await this.pushToCloud();
                   } else {
@@ -262,7 +264,7 @@ class StorageService {
               console.warn("[MoneyFlow] Auth state change error, continuing in local mode:", error);
               this.goOffline();
           });
-          console.log(`[MoneyFlow] Firebase Initialized. Auth: ${!!firebaseAuth}, Database: ${!!rtdb}, DB URL: ${FIREBASE_CONFIG.databaseURL || 'Not configured'}`);
+          console.log(`[MoneyFlow] Firebase Initialized. Auth: ${!!firebaseAuth}, Database: ${!!this.cloudRepository}, DB URL: ${FIREBASE_CONFIG.databaseURL || 'Not configured'}`);
       } catch (e) {
           console.error("[MoneyFlow] Firebase Init Crashed. Falling back to LOCAL MODE.", e);
           this.goOffline();
@@ -274,9 +276,7 @@ class StorageService {
   private syncStatus: 'IDLE' | 'SYNCING' | 'ERROR' = 'IDLE';
 
   private setupRealtimeSync(uid: string) {
-      if (!rtdb) return;
-      
-      const userRef = ref(rtdb, `users/${uid}`);
+      if (!this.cloudRepository) return;
       
       try {
           console.log(`[MoneyFlow] Setting up realtime sync for ${uid}`);
@@ -284,46 +284,49 @@ class StorageService {
           notify();
 
           // 1. Realtime Listener (Push-based)
-          this.syncUnsubscribe = onValue(userRef, (snapshot) => {
-              const data = snapshot.val();
-              if (data) {
-                  console.log("[MoneyFlow] Realtime Update Received", Object.keys(data));
-                  this.restoreFullState(data);
-                  this.syncStatus = 'IDLE';
-                  notify();
-              } else {
-                  console.log("[MoneyFlow] Realtime Update: No Data (New User?)");
-                  this.syncStatus = 'IDLE';
-                  notify();
+          this.syncUnsubscribe = this.cloudRepository.subscribe(
+              uid,
+              (data) => {
+                  if (data) {
+                      console.log("[MoneyFlow] Realtime Update Received", Object.keys(data));
+                      this.restoreFullState(data);
+                      this.syncStatus = 'IDLE';
+                      notify();
+                  } else {
+                      console.log("[MoneyFlow] Realtime Update: No Data (New User?)");
+                      this.syncStatus = 'IDLE';
+                      notify();
+                  }
+              },
+              (error: any) => {
+                  console.error("[MoneyFlow] Realtime Sync Error", error);
+                  
+                  // Check if error indicates Firebase is broken/unavailable
+                  const errorCode = error?.code || error?.message || '';
+                  const errorMessage = String(errorCode).toLowerCase();
+                  const isFirebaseError = typeof errorCode === 'string' && (
+                      errorMessage.includes('permission-denied') ||
+                      errorMessage.includes('permission_denied') ||
+                      errorMessage.includes('unavailable') ||
+                      errorMessage.includes('network') ||
+                      errorMessage.includes('name_not_resolved') ||
+                      errorMessage.includes('err_name_not_resolved') ||
+                      errorMessage.includes('auth') ||
+                      errorMessage.includes('invalid-api-key') ||
+                      errorMessage.includes('project-not-found') ||
+                      errorMessage.includes('failed to fetch')
+                  );
+                  
+                  if (isFirebaseError) {
+                      console.warn("[MoneyFlow] Firebase error in realtime sync. Switching to offline mode.");
+                      this.goOffline();
+                  } else {
+                      // Temporary error - just set to IDLE
+                      this.syncStatus = 'IDLE';
+                      notify();
+                  }
               }
-          }, (error: any) => {
-              console.error("[MoneyFlow] Realtime Sync Error", error);
-              
-              // Check if error indicates Firebase is broken/unavailable
-              const errorCode = error?.code || error?.message || '';
-              const errorMessage = String(errorCode).toLowerCase();
-              const isFirebaseError = typeof errorCode === 'string' && (
-                  errorMessage.includes('permission-denied') ||
-                  errorMessage.includes('permission_denied') ||
-                  errorMessage.includes('unavailable') ||
-                  errorMessage.includes('network') ||
-                  errorMessage.includes('name_not_resolved') ||
-                  errorMessage.includes('err_name_not_resolved') ||
-                  errorMessage.includes('auth') ||
-                  errorMessage.includes('invalid-api-key') ||
-                  errorMessage.includes('project-not-found') ||
-                  errorMessage.includes('failed to fetch')
-              );
-              
-              if (isFirebaseError) {
-                  console.warn("[MoneyFlow] Firebase error in realtime sync. Switching to offline mode.");
-                  this.goOffline();
-              } else {
-                  // Temporary error - just set to IDLE
-                  this.syncStatus = 'IDLE';
-                  notify();
-              }
-          });
+          );
       } catch (e: any) {
           console.error("[MoneyFlow] Failed to setup realtime sync:", e);
           const errorMessage = String(e?.message || e).toLowerCase();
@@ -338,16 +341,16 @@ class StorageService {
 
       // 2. Polling Fallback (Pull-based) - Every 10 seconds
       this.syncInterval = setInterval(async () => {
-          if (!rtdb) {
-              // rtdb became null, cleanup
+          if (!this.cloudRepository) {
+              // Cloud repository became unavailable, cleanup
               this.cleanupRealtimeSync();
               return;
           }
           
           try {
-              const snapshot = await get(userRef);
-              if (snapshot.exists()) {
-                   this.restoreFullState(snapshot.val());
+              const cloudState = await this.cloudRepository.pullState(uid);
+              if (cloudState) {
+                   this.restoreFullState(cloudState);
               }
           } catch (e: any) {
               console.warn("[MoneyFlow] Polling Sync Failed", e);
@@ -386,7 +389,7 @@ class StorageService {
 
   public goOffline() {
       firebaseAuth = null;
-      rtdb = null;
+      this.cloudRepository = null;
       this.syncStatus = 'IDLE';
       notify();
       console.log("[MoneyFlow] Switched to Offline Mode");
@@ -453,6 +456,182 @@ class StorageService {
       return this.editingKeys.has(key);
   }
 
+  private recordPendingChange(key: string) {
+      const existing = this.pendingLocalChanges[key];
+      const version = existing ? existing.version + 1 : 1;
+      this.pendingLocalChanges[key] = { value: this.get(key, null), version };
+  }
+
+  private snapshotPendingChanges() {
+      return Object.entries(this.pendingLocalChanges).map(([key, entry]) => ({
+          key,
+          value: entry.value,
+          version: entry.version,
+      }));
+  }
+
+  private clearPendingChanges(snapshot: Array<{ key: string; version: number }>) {
+      snapshot.forEach(({ key, version }) => {
+          const current = this.pendingLocalChanges[key];
+          if (current && current.version === version) {
+              delete this.pendingLocalChanges[key];
+          }
+      });
+  }
+
+  private mergeListByUpdatedAt(
+      localList: any[] | null | undefined,
+      remoteList: any[] | null | undefined,
+      preferLocalOnTie: boolean
+  ): any[] {
+      const safeLocal = Array.isArray(localList) ? localList : [];
+      const safeRemote = Array.isArray(remoteList) ? remoteList : [];
+      const localMap = new Map(safeLocal.map(item => [item.id, item]));
+      const remoteMap = new Map(safeRemote.map(item => [item.id, item]));
+
+      const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+      const merged: any[] = [];
+
+      allIds.forEach(id => {
+          const local = localMap.get(id);
+          const remote = remoteMap.get(id);
+
+          if (local && remote) {
+              const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
+              const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+
+              if (localTime > remoteTime) merged.push(local);
+              else if (remoteTime > localTime) merged.push(remote);
+              else merged.push(preferLocalOnTie ? local : remote);
+          } else if (local) {
+              merged.push(local);
+          } else if (remote) {
+              merged.push(remote);
+          }
+      });
+
+      return merged;
+  }
+
+  private mergeObjectByUpdatedAt(
+      localObj: any,
+      remoteObj: any,
+      preferLocalOnTie: boolean
+  ): any {
+      if (!localObj && !remoteObj) return null;
+      if (!remoteObj) return localObj;
+      if (!localObj) return remoteObj;
+
+      const localTime = localObj.updatedAt ? new Date(localObj.updatedAt).getTime() : 0;
+      const remoteTime = remoteObj.updatedAt ? new Date(remoteObj.updatedAt).getTime() : 0;
+
+      if (localTime > remoteTime) return localObj;
+      if (remoteTime > localTime) return remoteObj;
+      return preferLocalOnTie ? localObj : remoteObj;
+  }
+
+  private applyPendingLocalChanges(snapshot: Array<{ key: string; value: any }>) {
+      if (!snapshot.length) return;
+
+      const updates: Record<string, any> = {};
+
+      snapshot.forEach(({ key, value }) => {
+          if (Array.isArray(value)) {
+              const current = this.get<any[]>(key, []);
+              updates[key] = this.mergeListByUpdatedAt(value, current, true);
+          } else if (value && typeof value === 'object') {
+              const current = this.get<any>(key, null);
+              updates[key] = this.mergeObjectByUpdatedAt(value, current, true);
+          } else {
+              updates[key] = value;
+          }
+      });
+
+      Object.entries(updates).forEach(([key, val]) => {
+          this.set(key, val, true, true);
+      });
+  }
+
+  private normalizeList<T>(value: unknown): T[] {
+      if (Array.isArray(value)) {
+          return value as T[];
+      }
+      if (value && typeof value === 'object') {
+          return Object.values(value as Record<string, T>);
+      }
+      return [];
+  }
+
+  private collectLocalOverrides(remoteState: any): Record<string, any> {
+      const updates: Record<string, any> = {};
+      if (!remoteState) return updates;
+
+      const checkList = (key: string) => {
+          if (this.editingKeys.has(key)) return;
+
+          const localList = this.normalizeList<any>(this.get<any[]>(key, []));
+          const remoteList = this.normalizeList<any>(remoteState[key]);
+          const hasRemote = remoteState && remoteState[key] !== undefined && remoteState[key] !== null;
+
+          if (!hasRemote) {
+              if (localList.length > 0) updates[key] = localList;
+              return;
+          }
+
+          const remoteMap = new Map(remoteList.map((item: any) => [item.id, item]));
+          let hasOverride = false;
+
+          for (const localItem of localList) {
+              const remoteItem = remoteMap.get(localItem.id);
+              if (!remoteItem) {
+                  hasOverride = true;
+                  break;
+              }
+              const localTime = localItem?.updatedAt ? new Date(localItem.updatedAt).getTime() : 0;
+              const remoteTime = remoteItem?.updatedAt ? new Date(remoteItem.updatedAt).getTime() : 0;
+              if (localTime > remoteTime) {
+                  hasOverride = true;
+                  break;
+              }
+              if (localTime === remoteTime && localItem?.isDeleted && !remoteItem?.isDeleted) {
+                  hasOverride = true;
+                  break;
+              }
+          }
+
+          if (hasOverride) updates[key] = localList;
+      };
+
+      const checkObject = (key: string) => {
+          if (this.editingKeys.has(key)) return;
+
+          const localObj = this.get<any>(key, null);
+          const remoteObj = remoteState[key] ?? null;
+
+          if (!remoteObj) {
+              if (localObj) updates[key] = localObj;
+              return;
+          }
+          if (!localObj) return;
+
+          const localTime = localObj.updatedAt ? new Date(localObj.updatedAt).getTime() : 0;
+          const remoteTime = remoteObj.updatedAt ? new Date(remoteObj.updatedAt).getTime() : 0;
+          if (localTime > remoteTime) updates[key] = localObj;
+      };
+
+      checkObject('settings');
+      checkObject('profile');
+      checkObject('plan');
+
+      checkList('accounts');
+      checkList('categories');
+      checkList('transactions');
+      checkList('goals');
+      checkList('importRules');
+
+      return updates;
+  }
+
   // Smart Merge Strategy: Last-Write-Wins based on updatedAt
   // This ensures that if we edit offline, our newer timestamp wins against an older server timestamp.
   // Also skips keys that are currently being edited to prevent overwriting in-progress edits.
@@ -468,34 +647,10 @@ class StorageService {
               return;
           }
           
-          if (!Array.isArray(remoteList)) return;
-          const localList = this.get<any[]>(key, []);
-          const localMap = new Map(localList.map(i => [i.id, i]));
-          const remoteMap = new Map(remoteList.map(i => [i.id, i]));
-          
-          const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
-          const merged: any[] = [];
-
-          allIds.forEach(id => {
-              const local = localMap.get(id);
-              const remote = remoteMap.get(id);
-
-              if (local && remote) {
-                  const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
-                  const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
-                  // If local is strictly newer, keep local. Otherwise trust server.
-                  if (localTime > remoteTime) merged.push(local);
-                  else merged.push(remote);
-              } else if (remote) {
-                  merged.push(remote);
-              } else if (local) {
-                  // Item exists locally but not on remote.
-                  // For now, assume it's a new local item that hasn't synced.
-                  merged.push(local);
-              }
-          });
-          
-          updates[key] = merged;
+          const normalizedRemote = this.normalizeList<any>(remoteList);
+          const localList = this.normalizeList<any>(this.get<any[]>(key, []));
+          if (!normalizedRemote.length && !localList.length) return;
+          updates[key] = this.mergeListByUpdatedAt(localList, normalizedRemote, false);
       };
 
       const mergeObject = (key: string, remoteObj: any) => {
@@ -507,17 +662,7 @@ class StorageService {
           
           if (!remoteObj) return;
           const localObj = this.get<any>(key, null);
-          if (!localObj) {
-              updates[key] = remoteObj;
-              return;
-          }
-          
-          const localTime = localObj.updatedAt ? new Date(localObj.updatedAt).getTime() : 0;
-          const remoteTime = remoteObj.updatedAt ? new Date(remoteObj.updatedAt).getTime() : 0;
-          
-          if (remoteTime >= localTime) {
-              updates[key] = remoteObj;
-          }
+          updates[key] = this.mergeObjectByUpdatedAt(localObj, remoteObj, false);
       };
 
       if(data.settings) mergeObject('settings', data.settings);
@@ -607,8 +752,6 @@ class StorageService {
       }
   }
 
-  private pendingSyncKeys: Set<string> = new Set();
-
   private scheduleCloudPush(key?: string) { 
       // Don't sync if this key is being edited
       if (key && this.editingKeys.has(key)) {
@@ -616,42 +759,35 @@ class StorageService {
           return;
       }
       
-      if (key) this.pendingSyncKeys.add(key);
+      if (key) this.recordPendingChange(key);
       
-      if (rtdb && this.getSession()) {
+      if (this.cloudRepository && this.getSession()) {
           // Debounce writes
           if (this.pushTimer) clearTimeout(this.pushTimer);
           this.pushTimer = setTimeout(() => this.pushToCloud(), 1000); // Reduced to 1s
-      } else if (!rtdb) {
-          // If rtdb is null, clear pending keys and ensure status is IDLE
-          this.pendingSyncKeys.clear();
-          if (this.syncStatus !== 'IDLE') {
-              this.syncStatus = 'IDLE';
-              notify();
-          }
+      } else if (this.syncStatus !== 'IDLE') {
+          this.syncStatus = 'IDLE';
+          notify();
       }
   }
 
   async pushToCloud() { 
-      const id = this.getSession(); 
-      
-      // Early return if no session or rtdb is unavailable
-      if (!id) {
-          this.pendingSyncKeys.clear();
-          if (this.syncStatus !== 'IDLE') {
-              this.syncStatus = 'IDLE';
-              notify();
-          }
+      if (this.syncInProgress) {
+          this.syncQueued = true;
           return;
       }
+
+      this.syncInProgress = true;
+
+      const id = this.getSession();
       
-      if (!rtdb) {
-          // rtdb is null, we're in offline mode
-          this.pendingSyncKeys.clear();
+      // Early return if no session or cloud repository is unavailable
+      if (!id || !this.cloudRepository) {
           if (this.syncStatus !== 'IDLE') {
               this.syncStatus = 'IDLE';
               notify();
           }
+          this.syncInProgress = false;
           return;
       }
       
@@ -667,23 +803,34 @@ class StorageService {
               notify();
           }
       }, 30000);
+
+      const pendingSnapshot = this.snapshotPendingChanges();
+      let hasCloudState = false;
+      let pulledState: any = null;
       
       try {
-         const userRef = ref(rtdb, `users/${id}`);
-         const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
-         
-         // If we have specific keys, only update those
-         if (this.pendingSyncKeys.size > 0) {
-             this.pendingSyncKeys.forEach(k => {
-                 updates[k] = this.get(k, null);
-             });
-             this.pendingSyncKeys.clear();
-             await update(userRef, updates);
-         } else {
-             // Fallback to full push if no keys tracked (shouldn't happen often)
-             await update(userRef, { ...this.getFullState(), updatedAt: new Date().toISOString() }); 
+         const cloudState = await this.cloudRepository.pullState(id);
+         pulledState = cloudState;
+         if (cloudState) {
+             hasCloudState = true;
+             this.restoreFullState(cloudState);
+         }
+
+         this.applyPendingLocalChanges(pendingSnapshot);
+
+         const updates: Record<string, any> = hasCloudState ? this.collectLocalOverrides(pulledState) : {};
+         pendingSnapshot.forEach(({ key }) => {
+             if (this.editingKeys.has(key)) return;
+             updates[key] = this.get(key, null);
+         });
+
+         if (Object.keys(updates).length > 0) {
+             await this.cloudRepository.patchState(id, updates);
+         } else if (!hasCloudState) {
+             await this.cloudRepository.uploadState(id, this.getFullState());
          }
          console.log("[MoneyFlow] Cloud Push Success");
+         this.clearPendingChanges(pendingSnapshot);
          if (this.syncTimeoutTimer) {
              clearTimeout(this.syncTimeoutTimer);
              this.syncTimeoutTimer = null;
@@ -719,8 +866,15 @@ class StorageService {
               // Temporary network error or other issue - stay in IDLE, don't go offline
               this.syncStatus = 'IDLE';
           }
+      } finally {
+          this.syncInProgress = false;
+          notify();
+
+          if (this.syncQueued) {
+              this.syncQueued = false;
+              this.pushToCloud();
+          }
       }
-      notify();
   }
 
   async pullFromCloud(): Promise<boolean> { 
@@ -734,7 +888,7 @@ class StorageService {
           return false;
       }
       
-      if (!rtdb) {
+      if (!this.cloudRepository) {
           if (this.syncStatus !== 'IDLE') {
               this.syncStatus = 'IDLE';
               notify();
@@ -757,11 +911,10 @@ class StorageService {
       }, 30000);
       
       try {
-        const userRef = ref(rtdb, `users/${id}`);
-        const s = await get(userRef); 
-        if (s.exists()) {
-            console.log("[MoneyFlow] Cloud Pull Success", Object.keys(s.val()));
-            this.restoreFullState(s.val()); 
+        const cloudState = await this.cloudRepository.pullState(id);
+        if (cloudState) {
+            console.log("[MoneyFlow] Cloud Pull Success", Object.keys(cloudState));
+            this.restoreFullState(cloudState); 
             if (this.syncTimeoutTimer) {
                 clearTimeout(this.syncTimeoutTimer);
                 this.syncTimeoutTimer = null;
@@ -829,12 +982,7 @@ class StorageService {
         }
 
         this.setSession(r.user.uid); 
-        
-        // Pull data first
-        const hasData = await this.pullFromCloud(); 
-        if (!hasData) {
-            await this.pushToCloud();
-        }
+        await this.pushToCloud();
         
         // Update Profile from Google Data
         // Use full email as username fallback if display name is missing
@@ -878,10 +1026,7 @@ class StorageService {
              if (email !== u) await this.migrateLocalData(email, cred.user.uid);
 
              this.setSession(cred.user.uid);
-             const hasData = await this.pullFromCloud();
-             if (!hasData) {
-                 await this.pushToCloud();
-             }
+             await this.pushToCloud();
              
              // Ensure profile exists
              const currentProfile = this.get('profile', null);
@@ -1036,7 +1181,6 @@ class StorageService {
   }
 
   async forceSync() {
-      await this.pullFromCloud();
       await this.pushToCloud();
       notify();
   }
@@ -1101,18 +1245,24 @@ class StorageService {
   }
   mergeCategory(s: string, t: string) { if(s===t) return; const txs = this.getTransactions().map(tx=>tx.categoryId===s?{...tx, categoryId:t}:tx); this.set('transactions', txs); this.deleteCategory(s); }
   getTransactions() { 
-      let txs = this.get<Transaction[]>('transactions', []);
-      if (!Array.isArray(txs)) txs = [];
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
       return txs.filter(t => t && !t.isDeleted).sort((a,b)=>b.date.localeCompare(a.date)); 
   }
-  addTransaction(t: Omit<Transaction, 'id'>) { this.set('transactions', [{ ...t, id: generateId(), updatedAt: new Date().toISOString() }, ...this.get<Transaction[]>('transactions', [])]); }
-  updateTransaction(t: Transaction) { this.set('transactions', this.get<Transaction[]>('transactions', []).map(ex=>ex.id===t.id?{ ...t, updatedAt: new Date().toISOString() }:ex)); }
+  addTransaction(t: Omit<Transaction, 'id'>) { 
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
+      this.set('transactions', [{ ...t, id: generateId(), updatedAt: new Date().toISOString() }, ...txs]); 
+  }
+  updateTransaction(t: Transaction) { 
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
+      this.set('transactions', txs.map(ex=>ex.id===t.id?{ ...t, updatedAt: new Date().toISOString() }:ex)); 
+  }
   bulkAddTransactions(txs: Omit<Transaction, 'id'>[]) { 
       const now = new Date().toISOString();
-      this.set('transactions', [...txs.map(t=>({...t, id:generateId(), updatedAt: now})), ...this.get<Transaction[]>('transactions', [])]); 
+      const existing = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
+      this.set('transactions', [...txs.map(t=>({...t, id:generateId(), updatedAt: now})), ...existing]); 
   }
   deleteTransaction(id: string) { 
-      const txs = this.get<Transaction[]>('transactions', []);
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
       const now = new Date().toISOString();
       this.set('transactions', txs.map(t => t.id === id ? { ...t, isDeleted: true, updatedAt: now } : t)); 
   }
@@ -1137,7 +1287,7 @@ class StorageService {
       const fromTxId = generateId();
       const toTxId = generateId();
       const now = new Date().toISOString();
-      const txs = this.get<Transaction[]>('transactions', []);
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
       const outTx: Transaction = { id: fromTxId, date, amount, description: description, categoryId: 'transfer_out', accountId: fromId, type: 'EXPENSE', relatedTransactionId: toTxId, updatedAt: now };
       const inTx: Transaction = { id: toTxId, date, amount, description: description, categoryId: 'transfer_in', accountId: toId, type: 'INCOME', relatedTransactionId: fromTxId, updatedAt: now };
       this.set('transactions', [outTx, inTx, ...txs]);
@@ -1158,7 +1308,7 @@ class StorageService {
   }
   getSyncConfig(): SyncConfig & { status: string } { 
       return { 
-          type: rtdb ? 'FIREBASE' : 'LOCAL', 
+          type: this.cloudRepository ? 'FIREBASE' : 'LOCAL', 
           lastSyncedAt: new Date().toISOString(),
           status: this.syncStatus
       }; 
