@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, TransactionType, Goal } from '../types';
-import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown, Target } from 'lucide-react';
 
 // Extracted Component to prevent re-mounting flicker
 const TransactionItem: React.FC<{ 
@@ -26,18 +26,21 @@ const TransactionItem: React.FC<{
     const displaySymbol = settings.currencySymbol;
 
     const getIcon = () => {
+      if (tx.type === 'GOAL') return <Target size={16} />;
         if (tx.type === 'INCOME') return <ArrowDownLeft size={16} />;
         if (tx.type === 'INVESTMENT') return <TrendingUp size={16} />;
         return <ArrowUpRight size={16} />;
     };
 
     const getColorClass = () => {
+      if (tx.type === 'GOAL') return 'bg-amber-500/10 text-amber-400';
         if (tx.type === 'INCOME') return 'bg-emerald-500/10 text-emerald-500';
         if (tx.type === 'INVESTMENT') return 'bg-purple-500/10 text-purple-500';
         return 'bg-rose-500/10 text-rose-500';
     };
     
     const getAmountColor = () => {
+      if (tx.type === 'GOAL') return 'text-amber-400';
         if (tx.type === 'INCOME') return 'text-emerald-400';
         if (tx.type === 'INVESTMENT') return 'text-purple-400';
         return 'text-rose-400';
@@ -58,7 +61,11 @@ const TransactionItem: React.FC<{
                       <p className="font-bold text-slate-200 text-sm truncate max-w-[140px] leading-tight">{tx.description}</p>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-slate-500">{tx.date.substring(5)}</span>
-                          {category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>}
+                            {tx.type === 'GOAL' ? (
+                              <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Goal Feed</span>
+                            ) : (
+                              category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>
+                            )}
                           {displaySponsored > 0 && (
                             <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Sponsored {displaySymbol}{displaySponsored.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           )}
@@ -90,17 +97,17 @@ const TransactionItem: React.FC<{
                       </span>
               )}
           </td>
-          <td className="px-6 py-4">
-              <span 
+            <td className="px-6 py-4">
+                <span 
                   className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border border-opacity-20 gap-1.5" 
                   style={{ 
-                      backgroundColor: `${category?.color || '#64748b'}10`, 
-                      color: category?.color || '#64748b',
-                      borderColor: category?.color || '#64748b'
+                    backgroundColor: `${tx.type === 'GOAL' ? '#f59e0b' : (category?.color || '#64748b')}10`, 
+                    color: tx.type === 'GOAL' ? '#f59e0b' : (category?.color || '#64748b'),
+                    borderColor: tx.type === 'GOAL' ? '#f59e0b' : (category?.color || '#64748b')
                   }}
-              >
-                  <span>{category?.icon || '🏷️'}</span>
-                  {category?.name || 'General'}
+                >
+                <span>{tx.type === 'GOAL' ? '🎯' : (category?.icon || '🏷️')}</span>
+                {tx.type === 'GOAL' ? 'Goal Feed' : (category?.name || 'General')}
               </span>
           </td>
           <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
@@ -188,8 +195,8 @@ export const Transactions: React.FC = () => {
     }
   }, [accounts, isModalOpen, editingId]);
 
-  useEffect(() => {
-      if (mode === 'TRANSFER') return;
+    useEffect(() => {
+      if (mode === 'TRANSFER' || mode === 'GOAL') return;
       if (editingId) return; 
 
       const validCats = categories.filter(c => c.type === mode);
@@ -206,6 +213,13 @@ export const Transactions: React.FC = () => {
           setFormData(prev => ({ ...prev, investmentSubtype: currentCat.defaultInvestmentSubtype || 'SELF' }));
       }
   }, [mode, categories, editingId]);
+
+    useEffect(() => {
+      if (!isModalOpen || editingId || mode !== 'GOAL') return;
+      if (!formData.goalId && goals.length > 0) {
+        setFormData(prev => ({ ...prev, goalId: goals[0].id }));
+      }
+    }, [goals, isModalOpen, editingId, mode, formData.goalId]);
 
   const handleOpenAdd = () => {
       setEditingId(null);
@@ -290,8 +304,8 @@ export const Transactions: React.FC = () => {
       ? Math.min(amount, Math.max(0, parsedSponsored))
       : 0;
 
-    const parsedGoalContribution = parseFloat(formData.goalContribution);
-    const hasGoalContribution = !!formData.goalId && !isNaN(parsedGoalContribution) && parsedGoalContribution > 0;
+    let parsedGoalContribution = parseFloat(formData.goalContribution);
+    let hasGoalContribution = !!formData.goalId && !isNaN(parsedGoalContribution) && parsedGoalContribution > 0;
 
     if (editingId) {
         const previous = transactions.find(t => t.id === editingId);
@@ -304,10 +318,20 @@ export const Transactions: React.FC = () => {
     if (mode === 'TRANSFER') {
       db.addTransfer(formData.accountId, formData.toAccountId, amount, formData.date, formData.description || 'Transfer');
     } else {
-      let catId = formData.categoryId;
+      if (mode === 'GOAL') {
+          if (!formData.goalId) return;
+          parsedGoalContribution = amount;
+          hasGoalContribution = true;
+      }
+
+        let catId = formData.categoryId;
+        if (mode === 'GOAL') catId = 'goal_feed';
       if (!catId) {
-          const defaults = categories.filter(c => c.type === mode);
-          catId = defaults[0]?.id;
+          if (mode === 'GOAL') catId = 'goal_feed';
+          else {
+              const defaults = categories.filter(c => c.type === mode);
+              catId = defaults[0]?.id;
+          }
       }
 
       const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
@@ -315,7 +339,7 @@ export const Transactions: React.FC = () => {
       db.addTransaction({
         date: formData.date,
         amount: amount,
-        description: formData.description,
+        description: formData.description || (mode === 'GOAL' ? 'Goal Feed' : ''),
         categoryId: catId,
         accountId: formData.accountId,
         type: mode,
@@ -395,6 +419,7 @@ export const Transactions: React.FC = () => {
                       <option value="INCOME">Income</option>
                       <option value="EXPENSE">Expense</option>
                       <option value="INVESTMENT">Investment</option>
+                       <option value="GOAL">Goal Feed</option>
                       <option value="TRANSFER">Transfer</option>
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
@@ -504,6 +529,7 @@ export const Transactions: React.FC = () => {
                         <button onClick={() => setMode('EXPENSE')} className={`flex-1 px-3 py-1.5 text-[10px] font-black rounded-xl transition-all ${mode === 'EXPENSE' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}>EXP</button>
                         <button onClick={() => setMode('INCOME')} className={`flex-1 px-3 py-1.5 text-[10px] font-black rounded-xl transition-all ${mode === 'INCOME' ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}>INC</button>
                         <button onClick={() => setMode('INVESTMENT')} className={`flex-1 px-3 py-1.5 text-[10px] font-black rounded-xl transition-all ${mode === 'INVESTMENT' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}>INV</button>
+                    <button onClick={() => setMode('GOAL')} className={`flex-1 px-3 py-1.5 text-[10px] font-black rounded-xl transition-all ${mode === 'GOAL' ? 'bg-amber-500 text-slate-950 shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}>GOAL</button>
                         <button onClick={() => setMode('TRANSFER')} className={`flex-1 px-3 py-1.5 text-[10px] font-black rounded-xl transition-all ${mode === 'TRANSFER' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}>TRF</button>
                      </div>
                  )}
@@ -553,113 +579,151 @@ export const Transactions: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                    {mode === 'INVESTMENT' && (
-                        <div>
-                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Investment Type</label>
-                            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner">
-                                <button 
-                                    onClick={() => setFormData({...formData, investmentSubtype: 'SELF'})}
-                                    className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SELF' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
-                                >
-                                    SELF
-                                </button>
-                                <button 
-                                    onClick={() => setFormData({...formData, investmentSubtype: 'SPONSORED'})}
-                                    className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SPONSORED' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
-                                >
-                                    SPONSORED
-                                </button>
-                            </div>
-                            <p className="text-[9px] text-slate-600 mt-1 ml-1">
-                                {formData.investmentSubtype === 'SELF' ? 'Money deducted from account' : 'No money deducted, investment added directly'}
-                            </p>
-                        </div>
-                    )}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Vessel</label>
-                            <div className="relative">
-                                <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.accountId} onChange={e => setFormData({...formData, accountId: e.target.value})}>
-                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                </select>
-                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
-                            </div>
-                        </div>
-                        <div>
-                        <div className="flex items-center justify-between mb-2 ml-1">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Classification</label>
-                          <button
-                            onClick={() => setIsCategoryModalOpen(true)}
-                            className="text-[9px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300"
-                          >
-                            Add
-                          </button>
-                        </div>
-                            <div className="relative">
-                                <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.categoryId} onChange={e => {
-                                    const selectedCat = categories.find(c => c.id === e.target.value);
-                                    setFormData({
-                                        ...formData, 
-                                        categoryId: e.target.value,
-                                        investmentSubtype: mode === 'INVESTMENT' ? (selectedCat?.defaultInvestmentSubtype || 'SELF') : formData.investmentSubtype
-                                    });
-                                }}>
-                                    {categories.filter(c => c.type === mode).map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                                </select>
-                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Savings Goal (Optional)</label>
+                  {mode === 'GOAL' ? (
+                    <>
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="relative">
-                          <select
-                            className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer"
-                            value={formData.goalId}
-                            onChange={e => setFormData({ ...formData, goalId: e.target.value })}
-                          >
-                            <option value="">No goal</option>
-                            {goals.map(goal => (
-                              <option key={goal.id} value={goal.id}>{goal.name}</option>
-                            ))}
-                          </select>
-                          <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Vessel</label>
+                          <div className="relative">
+                            <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.accountId} onChange={e => setFormData({...formData, accountId: e.target.value})}>
+                              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                          </div>
                         </div>
-                        <div className="relative">
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Goal</label>
+                          <div className="relative">
+                            <select
+                              className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer"
+                              value={formData.goalId}
+                              onChange={e => setFormData({ ...formData, goalId: e.target.value })}
+                            >
+                              {goals.map(goal => (
+                                <option key={goal.id} value={goal.id}>{goal.name}</option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                          </div>
+                        </div>
+                      </div>
+                      {goals.length === 0 && (
+                        <p className="text-[9px] text-slate-600 mt-2 ml-1">
+                          Create a goal in the Dashboard to feed it here.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {mode === 'INVESTMENT' && (
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Investment Type</label>
+                          <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner">
+                            <button 
+                              onClick={() => setFormData({...formData, investmentSubtype: 'SELF'})}
+                              className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SELF' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                            >
+                              SELF
+                            </button>
+                            <button 
+                              onClick={() => setFormData({...formData, investmentSubtype: 'SPONSORED'})}
+                              className={`flex-1 px-3 py-2.5 text-[10px] font-black rounded-xl transition-all ${formData.investmentSubtype === 'SPONSORED' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                            >
+                              SPONSORED
+                            </button>
+                          </div>
+                          <p className="text-[9px] text-slate-600 mt-1 ml-1">
+                            {formData.investmentSubtype === 'SELF' ? 'Money deducted from account' : 'No money deducted, investment added directly'}
+                          </p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Vessel</label>
+                          <div className="relative">
+                            <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.accountId} onChange={e => setFormData({...formData, accountId: e.target.value})}>
+                              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-2 ml-1">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Classification</label>
+                            <button
+                              onClick={() => setIsCategoryModalOpen(true)}
+                              className="text-[9px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300"
+                            >
+                              Add
+                            </button>
+                          </div>
+                          <div className="relative">
+                            <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.categoryId} onChange={e => {
+                              const selectedCat = categories.find(c => c.id === e.target.value);
+                              setFormData({
+                                ...formData, 
+                                categoryId: e.target.value,
+                                investmentSubtype: mode === 'INVESTMENT' ? (selectedCat?.defaultInvestmentSubtype || 'SELF') : formData.investmentSubtype
+                              });
+                            }}>
+                              {categories.filter(c => c.type === mode).map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Savings Goal (Optional)</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="relative">
+                            <select
+                              className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer"
+                              value={formData.goalId}
+                              onChange={e => setFormData({ ...formData, goalId: e.target.value })}
+                            >
+                              <option value="">No goal</option>
+                              {goals.map(goal => (
+                                <option key={goal.id} value={goal.id}>{goal.name}</option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.01"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                              placeholder="0.00"
+                              value={formData.goalContribution}
+                              onChange={e => setFormData({ ...formData, goalContribution: e.target.value })}
+                              disabled={!formData.goalId}
+                            />
+                          </div>
+                        </div>
+                        {goals.length === 0 && (
+                          <p className="text-[9px] text-slate-600 mt-2 ml-1">
+                            Create a goal in the Dashboard to link contributions here.
+                          </p>
+                        )}
+                      </div>
+
+                      {mode === 'EXPENSE' && (
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Sponsored Amount (Optional)</label>
                           <input
                             type="number"
                             step="0.01"
                             className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
                             placeholder="0.00"
-                            value={formData.goalContribution}
-                            onChange={e => setFormData({ ...formData, goalContribution: e.target.value })}
-                            disabled={!formData.goalId}
+                            value={formData.sponsoredAmount}
+                            onChange={e => setFormData({ ...formData, sponsoredAmount: e.target.value })}
                           />
+                          <p className="text-[9px] text-slate-600 mt-2 ml-1">This reduces your out-of-pocket expense, not the total cost.</p>
                         </div>
-                      </div>
-                      {goals.length === 0 && (
-                        <p className="text-[9px] text-slate-600 mt-2 ml-1">
-                          Create a goal in the Dashboard to link contributions here.
-                        </p>
                       )}
-                    </div>
-
-                    {mode === 'EXPENSE' && (
-                      <div>
-                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Sponsored Amount (Optional)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
-                          placeholder="0.00"
-                          value={formData.sponsoredAmount}
-                          onChange={e => setFormData({ ...formData, sponsoredAmount: e.target.value })}
-                        />
-                        <p className="text-[9px] text-slate-600 mt-2 ml-1">This reduces your out-of-pocket expense, not the total cost.</p>
-                      </div>
-                    )}
+                    </>
+                  )}
                 </div>
               )}
 

@@ -1,6 +1,6 @@
 
 
-export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'INVESTMENT';
+export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'INVESTMENT' | 'GOAL';
 
 export interface User {
   id: string;
