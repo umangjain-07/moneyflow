@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
-import { Transaction, Category, Account, TransactionType } from '../types';
+import { Transaction, Category, Account, TransactionType, Goal } from '../types';
 import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown } from 'lucide-react';
 
 // Extracted Component to prevent re-mounting flicker
@@ -17,7 +17,12 @@ const TransactionItem: React.FC<{
 }> = ({ tx, isMobile, index, categories, accounts, settings, handleOpenEdit, handleDelete }) => {
     const category = categories.find(c => c.id === tx.categoryId);
     const account = accounts.find(a => a.id === tx.accountId);
-    const displayAmount = db.convertAmount(tx.amount, account?.currency || settings.currency, settings.currency);
+  const sponsoredAmount = tx.type === 'EXPENSE' ? (tx.sponsoredAmount || 0) : 0;
+  const netAmount = tx.type === 'EXPENSE' ? Math.max(0, tx.amount - sponsoredAmount) : tx.amount;
+  const displayAmount = db.convertAmount(netAmount, account?.currency || settings.currency, settings.currency);
+  const displaySponsored = sponsoredAmount > 0
+    ? db.convertAmount(sponsoredAmount, account?.currency || settings.currency, settings.currency)
+    : 0;
     const displaySymbol = settings.currencySymbol;
 
     const getIcon = () => {
@@ -51,9 +56,12 @@ const TransactionItem: React.FC<{
                   </div>
                   <div className="flex flex-col">
                       <p className="font-bold text-slate-200 text-sm truncate max-w-[140px] leading-tight">{tx.description}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-slate-500">{tx.date.substring(5)}</span>
                           {category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>}
+                          {displaySponsored > 0 && (
+                            <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Sponsored {displaySymbol}{displaySponsored.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          )}
                       </div>
                   </div>
               </div>
@@ -98,6 +106,9 @@ const TransactionItem: React.FC<{
           <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
           <td className={`px-6 py-4 text-right font-bold font-mono ${getAmountColor()}`}>
               {tx.type === 'INCOME' ? '+' : '-'}{displaySymbol}{displayAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+              {displaySponsored > 0 && (
+                <div className="text-[10px] text-amber-400 font-bold mt-1">Sponsored {displaySymbol}{displaySponsored.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+              )}
           </td>
           <td className="px-6 py-4 text-right">
               <button onClick={(e) => { e.stopPropagation(); handleDelete(tx.id); }} className="text-slate-600 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100">
@@ -112,6 +123,7 @@ export const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [settings, setSettings] = useState(db.getSettings());
   const [search, setSearch] = useState('');
   
@@ -125,6 +137,10 @@ export const Transactions: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransactionType>('EXPENSE');
 
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryGroup, setNewCategoryGroup] = useState('General');
+
   const [formData, setFormData] = useState({
     amount: '',
     description: '',
@@ -133,7 +149,10 @@ export const Transactions: React.FC = () => {
     accountId: '',
     toAccountId: '', 
     tags: '',
-    investmentSubtype: 'SELF' as 'SELF' | 'SPONSORED'
+    investmentSubtype: 'SELF' as 'SELF' | 'SPONSORED',
+    goalId: '',
+    goalContribution: '',
+    sponsoredAmount: ''
   });
 
   const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -150,6 +169,7 @@ export const Transactions: React.FC = () => {
     setCategories(db.getCategories());
     setAccounts(db.getAccounts());
     setSettings(db.getSettings());
+    setGoals(db.getGoals());
   };
 
   useEffect(() => {
@@ -198,7 +218,10 @@ export const Transactions: React.FC = () => {
         accountId: accounts[0]?.id || '',
         toAccountId: '',
         tags: '',
-        investmentSubtype: 'SELF'
+        investmentSubtype: 'SELF',
+        goalId: '',
+        goalContribution: '',
+        sponsoredAmount: ''
       });
       setIsModalOpen(true);
   };
@@ -227,9 +250,33 @@ export const Transactions: React.FC = () => {
           accountId: tx.accountId,
           toAccountId: toAcc,
           tags: tx.tags?.join(', ') || '',
-          investmentSubtype: tx.investmentSubtype || 'SELF'
+          investmentSubtype: tx.investmentSubtype || 'SELF',
+          goalId: tx.goalId || '',
+            goalContribution: tx.goalContribution ? String(tx.goalContribution) : '',
+            sponsoredAmount: tx.sponsoredAmount ? String(tx.sponsoredAmount) : ''
       });
       setIsModalOpen(true);
+  };
+
+  const applyGoalDelta = (goalId: string, delta: number) => {
+    if (!goalId || !delta) return;
+    const currentGoals = db.getGoals();
+    const goal = currentGoals.find(g => g.id === goalId);
+    if (!goal) return;
+    const nextAmount = Math.max(0, Math.min(goal.targetAmount, goal.currentAmount + delta));
+    db.saveGoal({ ...goal, currentAmount: nextAmount });
+  };
+
+  const handleCreateCategory = () => {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) return;
+    const type = mode === 'TRANSFER' ? 'EXPENSE' : mode;
+    const group = newCategoryGroup.trim() || 'General';
+    const result = db.ensureCategory(trimmed, type as 'INCOME' | 'EXPENSE' | 'INVESTMENT', group);
+    setFormData(prev => ({ ...prev, categoryId: result.id }));
+    setIsCategoryModalOpen(false);
+    setNewCategoryName('');
+    setNewCategoryGroup('General');
   };
 
   const handleSubmit = () => {
@@ -238,7 +285,19 @@ export const Transactions: React.FC = () => {
     
     const amount = Math.abs(rawAmount);
 
+    const parsedSponsored = parseFloat(formData.sponsoredAmount);
+    const sponsoredAmount = mode === 'EXPENSE' && !isNaN(parsedSponsored)
+      ? Math.min(amount, Math.max(0, parsedSponsored))
+      : 0;
+
+    const parsedGoalContribution = parseFloat(formData.goalContribution);
+    const hasGoalContribution = !!formData.goalId && !isNaN(parsedGoalContribution) && parsedGoalContribution > 0;
+
     if (editingId) {
+        const previous = transactions.find(t => t.id === editingId);
+        if (previous?.goalId && previous.goalContribution) {
+            applyGoalDelta(previous.goalId, -previous.goalContribution);
+        }
         db.deleteTransaction(editingId);
     }
 
@@ -261,16 +320,27 @@ export const Transactions: React.FC = () => {
         accountId: formData.accountId,
         type: mode,
         tags: tagsArray,
-        investmentSubtype: mode === 'INVESTMENT' ? formData.investmentSubtype : undefined
+        investmentSubtype: mode === 'INVESTMENT' ? formData.investmentSubtype : undefined,
+        sponsoredAmount: mode === 'EXPENSE' && sponsoredAmount > 0 ? sponsoredAmount : undefined,
+        goalId: hasGoalContribution ? formData.goalId : undefined,
+        goalContribution: hasGoalContribution ? parsedGoalContribution : undefined
       });
+
+      if (hasGoalContribution) {
+        applyGoalDelta(formData.goalId, parsedGoalContribution);
+      }
     }
 
     setIsModalOpen(false);
-    setFormData({ amount: '', description: '', date: new Date().toISOString().split('T')[0], categoryId: '', accountId: '', toAccountId: '', tags: '', investmentSubtype: 'SELF' });
+    setFormData({ amount: '', description: '', date: new Date().toISOString().split('T')[0], categoryId: '', accountId: '', toAccountId: '', tags: '', investmentSubtype: 'SELF', goalId: '', goalContribution: '', sponsoredAmount: '' });
   };
 
   const handleDelete = (id: string) => {
     if (confirm('Delete this transaction?')) {
+      const existing = transactions.find(t => t.id === id);
+      if (existing?.goalId && existing.goalContribution) {
+        applyGoalDelta(existing.goalId, -existing.goalContribution);
+      }
       db.deleteTransaction(id);
       if(isModalOpen) setIsModalOpen(false);
     }
@@ -516,7 +586,15 @@ export const Transactions: React.FC = () => {
                             </div>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Classification</label>
+                        <div className="flex items-center justify-between mb-2 ml-1">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Classification</label>
+                          <button
+                            onClick={() => setIsCategoryModalOpen(true)}
+                            className="text-[9px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300"
+                          >
+                            Add
+                          </button>
+                        </div>
                             <div className="relative">
                                 <select className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer" value={formData.categoryId} onChange={e => {
                                     const selectedCat = categories.find(c => c.id === e.target.value);
@@ -532,6 +610,56 @@ export const Transactions: React.FC = () => {
                             </div>
                         </div>
                     </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Savings Goal (Optional)</label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="relative">
+                          <select
+                            className="w-full appearance-none bg-slate-950 border border-slate-800 text-white rounded-2xl p-4 outline-none pr-10 shadow-inner cursor-pointer"
+                            value={formData.goalId}
+                            onChange={e => setFormData({ ...formData, goalId: e.target.value })}
+                          >
+                            <option value="">No goal</option>
+                            {goals.map(goal => (
+                              <option key={goal.id} value={goal.id}>{goal.name}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                            placeholder="0.00"
+                            value={formData.goalContribution}
+                            onChange={e => setFormData({ ...formData, goalContribution: e.target.value })}
+                            disabled={!formData.goalId}
+                          />
+                        </div>
+                      </div>
+                      {goals.length === 0 && (
+                        <p className="text-[9px] text-slate-600 mt-2 ml-1">
+                          Create a goal in the Dashboard to link contributions here.
+                        </p>
+                      )}
+                    </div>
+
+                    {mode === 'EXPENSE' && (
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Sponsored Amount (Optional)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                          placeholder="0.00"
+                          value={formData.sponsoredAmount}
+                          onChange={e => setFormData({ ...formData, sponsoredAmount: e.target.value })}
+                        />
+                        <p className="text-[9px] text-slate-600 mt-2 ml-1">This reduces your out-of-pocket expense, not the total cost.</p>
+                      </div>
+                    )}
                 </div>
               )}
 
@@ -540,6 +668,43 @@ export const Transactions: React.FC = () => {
                 <button onClick={handleSubmit} className={`flex-1 py-4 text-slate-950 rounded-2xl shadow-xl font-black uppercase text-xs tracking-widest transition-all active:scale-95 ${mode === 'INCOME' ? 'bg-emerald-600 shadow-emerald-900/20' : mode === 'INVESTMENT' ? 'bg-purple-600 text-white shadow-purple-900/20' : 'bg-rose-600 text-white shadow-rose-900/20'}`}>
                   {editingId ? 'Update' : 'Execute'}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-slate-100 uppercase tracking-tight">New Category</h3>
+              <button onClick={() => setIsCategoryModalOpen(false)} className="p-2 bg-slate-800 rounded-full text-slate-500 hover:text-white transition-all"><X size={16} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Category Name</label>
+                <input
+                  type="text"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                  placeholder="e.g. Commute"
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Group</label>
+                <input
+                  type="text"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:border-emerald-500/50 shadow-inner"
+                  placeholder="General"
+                  value={newCategoryGroup}
+                  onChange={e => setNewCategoryGroup(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-4 pt-2">
+                <button onClick={() => setIsCategoryModalOpen(false)} className="flex-1 py-3 text-slate-500 font-bold uppercase text-xs tracking-widest hover:text-white transition-colors">Cancel</button>
+                <button onClick={handleCreateCategory} className="flex-1 py-3 bg-emerald-600 text-slate-950 font-black uppercase text-xs tracking-widest rounded-2xl hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/20">Add Category</button>
               </div>
             </div>
           </div>

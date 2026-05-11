@@ -49,6 +49,9 @@ export interface Transaction {
   relatedTransactionId?: string;
   tags?: string[];
   investmentSubtype?: 'SELF' | 'SPONSORED';
+  goalId?: string;
+  goalContribution?: number;
+  sponsoredAmount?: number;
   updatedAt?: string;
   isDeleted?: boolean;
 }
@@ -141,6 +144,8 @@ export interface FinancialHealth {
   totalInvestments: number;
   liquidAssets: number;
   investedAssets: number;
+  goalLockedAssets?: number;
+  freeLiquidAssets?: number;
   monthlyBurnRate: number;
   runwayMonths: number;
   savingsRate: number;

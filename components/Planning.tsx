@@ -90,7 +90,10 @@ export const Planning: React.FC = () => {
         if (d >= oneYearAgo && (t.type === 'EXPENSE' || t.type === 'INVESTMENT')) {
              const monthKey = t.date.substring(0, 7);
              if (!catMonthMap[t.categoryId]) catMonthMap[t.categoryId] = {};
-             catMonthMap[t.categoryId][monthKey] = (catMonthMap[t.categoryId][monthKey] || 0) + t.amount;
+             const rawAmount = t.type === 'EXPENSE'
+                 ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                 : t.amount;
+             catMonthMap[t.categoryId][monthKey] = (catMonthMap[t.categoryId][monthKey] || 0) + rawAmount;
         }
     });
 
@@ -228,6 +231,37 @@ export const Planning: React.FC = () => {
   };
 
   const projection = useMemo(() => calculateProjection(draftTemplate), [draftTemplate]);
+
+  const getMonthlyBudget = (conf: CategoryBudgetConfig) => {
+      if (conf.type === 'SUBSCRIPTION' || conf.period === 'YEARLY' || conf.period === 'MONTHLY_ONCE' || conf.period === 'CUSTOM') {
+          let monthlyLoad = conf.allocatedAmount;
+          if (conf.period === 'YEARLY') monthlyLoad = conf.allocatedAmount / 12;
+          if (conf.period === 'CUSTOM') {
+              const days = conf.customFrequencyDays || 30;
+              monthlyLoad = (conf.allocatedAmount / Math.max(1, days)) * 30;
+          }
+          return monthlyLoad;
+      }
+
+      return conf.allocatedAmount;
+  };
+
+  const buildYearlyAggregates = (year: number) => {
+      const targetMap: Record<string, number> = {};
+      const configMap: Record<string, CategoryBudgetConfig> = {};
+
+      for (let month = 0; month < 12; month += 1) {
+          const configs = getActiveConfigs(new Date(year, month, 1));
+          configs.forEach(conf => {
+              if (conf.type === 'IGNORE') return;
+              const monthly = getMonthlyBudget(conf);
+              targetMap[conf.categoryId] = (targetMap[conf.categoryId] || 0) + monthly;
+              if (!configMap[conf.categoryId]) configMap[conf.categoryId] = conf;
+          });
+      }
+
+      return { configs: Object.values(configMap), targets: targetMap };
+  };
 
   const getActiveConfigs = (targetDate: Date) => {
       if (!plan) return [];
@@ -515,20 +549,31 @@ export const Planning: React.FC = () => {
       );
   };
 
-  const renderDashboardConfigSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[], multiplier: number) => {
+  const renderDashboardConfigSection = (
+      configs: CategoryBudgetConfig[],
+      relevantTxs: Transaction[],
+      multiplier: number,
+      targetOverrides?: Record<string, number>
+  ) => {
       if (configs.length === 0) return null;
 
       return (
           <div className="space-y-3">
                  {configs.map(conf => {
                     const cat = categories.find(c => c.id === conf.categoryId);
-                    const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
+                    const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => {
+                        const rawAmount = t.type === 'EXPENSE'
+                            ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                            : t.amount;
+                        return s + db.convertAmount(rawAmount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency);
+                    }, 0);
                     
+                    const targetOverride = targetOverrides?.[conf.categoryId];
                     // For standard sections, use multiplier logic
-                    let target = conf.allocatedAmount * multiplier;
+                    let target = targetOverride !== undefined ? targetOverride : conf.allocatedAmount * multiplier;
                     
                     // For custom periods in dashboard view, approximate if needed
-                    if (conf.period === 'CUSTOM') {
+                    if (targetOverride === undefined && conf.period === 'CUSTOM') {
                         // Normalize to monthly then apply multiplier
                         const days = conf.customFrequencyDays || 30;
                         const monthly = (conf.allocatedAmount / days) * 30;
@@ -675,17 +720,27 @@ export const Planning: React.FC = () => {
     );
   };
 
-  const renderOneTimeSection = (configs: CategoryBudgetConfig[], relevantTxs: Transaction[]) => {
+    const renderOneTimeSection = (
+            configs: CategoryBudgetConfig[],
+            relevantTxs: Transaction[],
+            targetOverrides?: Record<string, number>
+    ) => {
     if (configs.length === 0) return null;
 
     return (
         <div className="grid grid-cols-1 gap-3">
             {configs.map(conf => {
                 const cat = categories.find(c => c.id === conf.categoryId);
-                const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency), 0);
+                const spent = relevantTxs.filter(t => t.categoryId === conf.categoryId).reduce((s,t) => {
+                    const rawAmount = t.type === 'EXPENSE'
+                        ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                        : t.amount;
+                    return s + db.convertAmount(rawAmount, accounts.find(a=>a.id===t.accountId)?.currency||settings.currency, settings.currency);
+                }, 0);
                 
                 // Show FULL COST always for Yearly/One-Time
-                const target = conf.allocatedAmount; 
+                const targetOverride = targetOverrides?.[conf.categoryId];
+                const target = targetOverride !== undefined ? targetOverride : conf.allocatedAmount; 
                 const isPaid = spent > 0;
 
                 return (
@@ -723,8 +778,15 @@ export const Planning: React.FC = () => {
   const renderDashboard = () => {
       if (!plan) return <div className="p-10 text-center text-slate-500">Initializing...</div>;
 
-      const activeConfigs = getActiveConfigs(historyDate);
+      let activeConfigs = getActiveConfigs(historyDate);
+      let targetOverrides: Record<string, number> | undefined;
       const planMeta = getActivePlanMeta(historyDate);
+
+      if (dashboardView === 'YEAR') {
+          const yearlyAgg = buildYearlyAggregates(historyDate.getFullYear());
+          activeConfigs = yearlyAgg.configs;
+          targetOverrides = yearlyAgg.targets;
+      }
 
       let startOfPeriod = '', endOfPeriod = '';
       let budgetMultiplier = 1;
@@ -765,21 +827,21 @@ export const Planning: React.FC = () => {
       // Calculate Total Allocated (Approximation for the Budget card)
       // This is complex because Subs/OneTime are full cost, others are monthly * multiplier
       let totalAllocated = 0;
-      activeConfigs.filter(c => c.type !== 'IGNORE').forEach(c => {
-          if (c.type === 'SUBSCRIPTION' || c.period === 'YEARLY' || c.period === 'MONTHLY_ONCE' || c.period === 'CUSTOM') {
-              // Approximate monthly load for stats
-              let monthlyLoad = c.allocatedAmount;
-              if (c.period === 'YEARLY') monthlyLoad = c.allocatedAmount / 12;
-              if (c.period === 'CUSTOM') monthlyLoad = (c.allocatedAmount / (c.customFrequencyDays||30)) * 30;
-              
-              totalAllocated += monthlyLoad * budgetMultiplier;
-          } else {
-              totalAllocated += c.allocatedAmount * budgetMultiplier;
-          }
-      });
+      if (targetOverrides) {
+          totalAllocated = Object.values(targetOverrides).reduce((sum, val) => sum + val, 0);
+      } else {
+          activeConfigs.filter(c => c.type !== 'IGNORE').forEach(c => {
+              totalAllocated += getMonthlyBudget(c) * budgetMultiplier;
+          });
+      }
       
       const relevantTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && (t.type === 'EXPENSE' || t.type === 'INVESTMENT'));
-      const totalSpent = relevantTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
+      const totalSpent = relevantTxs.reduce((s, t) => {
+          const rawAmount = t.type === 'EXPENSE'
+              ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+              : t.amount;
+          return s + db.convertAmount(rawAmount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency);
+      }, 0);
 
       const netDeviation = totalAllocated - totalSpent;
       const isPositiveDeviation = netDeviation >= 0;
@@ -889,7 +951,7 @@ export const Planning: React.FC = () => {
                             </h3>
                          </div>
                          <div className="p-6">
-                            {renderDashboardConfigSection(variableGroup, relevantTxs, budgetMultiplier)}
+                            {renderDashboardConfigSection(variableGroup, relevantTxs, budgetMultiplier, targetOverrides)}
                             {variableGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No variable rules set.</div>}
                          </div>
                     </div>
@@ -903,7 +965,7 @@ export const Planning: React.FC = () => {
                                 </h3>
                             </div>
                             <div className="p-6">
-                                {renderDashboardConfigSection(fixedGroup, relevantTxs, budgetMultiplier)}
+                                {renderDashboardConfigSection(fixedGroup, relevantTxs, budgetMultiplier, targetOverrides)}
                                 {fixedGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No fixed rules set.</div>}
                             </div>
                         </div>
@@ -915,7 +977,7 @@ export const Planning: React.FC = () => {
                                 </h3>
                             </div>
                             <div className="p-6">
-                                {renderOneTimeSection(oneTimeGroup, relevantTxs)}
+                                {renderOneTimeSection(oneTimeGroup, relevantTxs, targetOverrides)}
                                 {oneTimeGroup.length === 0 && <div className="text-slate-500 text-xs italic text-center py-4">No one-time rules set.</div>}
                             </div>
                         </div>

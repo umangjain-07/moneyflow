@@ -109,7 +109,10 @@ export const Reports: React.FC = () => {
     filteredTransactions.forEach(t => {
         const acc = accounts.find(a => a.id === t.accountId);
         const currency = acc ? acc.currency : settings.currency;
-        const amount = db.convertAmount(t.amount, currency, settings.currency);
+        const rawAmount = t.type === 'EXPENSE'
+            ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+            : t.amount;
+        const amount = db.convertAmount(rawAmount, currency, settings.currency);
         const cat = categories.find(c => c.id === t.categoryId);
 
         if (t.type === 'INCOME') {
@@ -149,7 +152,10 @@ export const Reports: React.FC = () => {
           const icon = cat?.icon || '🏷️';
           
           const acc = accounts.find(a => a.id === t.accountId);
-          const amount = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+          const rawAmount = t.type === 'EXPENSE'
+              ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+              : t.amount;
+          const amount = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
 
           if (!agg[id]) {
               agg[id] = { name, value: 0, color, type: t.type, icon };
@@ -177,7 +183,10 @@ export const Reports: React.FC = () => {
 
           const cat = categories.find(c => c.id === t.categoryId);
           const acc = accounts.find(a => a.id === t.accountId);
-          const amt = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+          const rawAmount = t.type === 'EXPENSE'
+              ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+              : t.amount;
+          const amt = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
           
           if(t.type === 'INVESTMENT') {
               data[key].investment += amt;
@@ -235,7 +244,10 @@ export const Reports: React.FC = () => {
           
           if (dayIdx >= 0 && dayIdx < days.length) {
               const acc = accounts.find(a => a.id === t.accountId);
-              const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+              const rawAmount = t.type === 'EXPENSE'
+                  ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                  : t.amount;
+              const val = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
               
               if (days[dayIdx].expense !== null) {
                   if (t.type === 'EXPENSE') days[dayIdx].expense! += val;

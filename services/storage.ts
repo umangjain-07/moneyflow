@@ -1155,7 +1155,11 @@ class StorageService {
       if (!Array.isArray(transactions)) return b; // Safety check
       transactions.filter(t => t.accountId === account.id && t.date <= endDate).forEach(t => {
           if (t.type === 'INCOME') b += t.amount;
-          else if (t.type === 'EXPENSE') b -= t.amount;
+          else if (t.type === 'EXPENSE') {
+              const sponsored = t.sponsoredAmount || 0;
+              const netExpense = Math.max(0, t.amount - sponsored);
+              b -= netExpense;
+          }
           else if (t.type === 'INVESTMENT') {
               // Only subtract for self investments, sponsored investments don't affect balance
               if (t.investmentSubtype !== 'SPONSORED') {
@@ -1190,6 +1194,24 @@ class StorageService {
       const now = new Date().toISOString();
       if (a.id) this.set('accounts', accs.map(ex => ex.id === a.id ? { ...a, updatedAt: now } : ex)); 
       else this.set('accounts', [...accs, { ...a, id: generateId(), updatedAt: now }]); 
+  }
+  deleteAccount(id: string) {
+      const accs = this.get<Account[]>('accounts', []);
+      const now = new Date().toISOString();
+      this.set('accounts', accs.map(a => a.id === id ? { ...a, isDeleted: true, updatedAt: now } : a));
+
+      const txs = this.normalizeList<Transaction>(this.get<Transaction[]>('transactions', []));
+      const idsToDelete = new Set<string>();
+      txs.forEach(t => {
+          if (t.accountId === id) {
+              idsToDelete.add(t.id);
+              if (t.relatedTransactionId) idsToDelete.add(t.relatedTransactionId);
+          }
+      });
+
+      if (idsToDelete.size > 0) {
+          this.set('transactions', txs.map(t => idsToDelete.has(t.id) ? { ...t, isDeleted: true, updatedAt: now } : t));
+      }
   }
   getCategories() { 
       let cats = this.get<Category[]>('categories', []);
@@ -1397,7 +1419,10 @@ class StorageService {
           
           if (dataMap.has(key)) {
               const acc = accounts.find(a => a.id === t.accountId);
-              const val = this.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+              const rawAmount = t.type === 'EXPENSE'
+                  ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                  : t.amount;
+              const val = this.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
               const entry = dataMap.get(key)!;
               
               if (t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out') return;
@@ -1424,7 +1449,10 @@ class StorageService {
       txs.forEach(t => {
           if (t.date.substring(0, 7) < startKey) {
              const acc = accounts.find(a => a.id === t.accountId);
-             const val = this.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+             const rawAmount = t.type === 'EXPENSE'
+                 ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                 : t.amount;
+             const val = this.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
              if (t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out') return;
              if (t.type === 'INCOME') preGraphDelta += val;
              if (t.type === 'EXPENSE') preGraphDelta -= val;
@@ -1445,6 +1473,7 @@ class StorageService {
       const accounts = this.getAccounts();
       const settings = this.getSettings();
       const transactions = this.getTransactions();
+      const goals = this.getGoals();
       
       let liquid = 0;
       let investedInAccounts = 0;
@@ -1465,7 +1494,11 @@ class StorageService {
       });
 
       const totalInvested = investedInAccounts + investedFlow;
-      const totalAssets = liquid + totalInvested;
+      const totalLiquid = liquid;
+      const goalLocked = goals.reduce((sum, g) => sum + (g.currentAmount || 0), 0);
+      const goalLockedAssets = Math.min(totalLiquid, Math.max(0, goalLocked));
+      const freeLiquidAssets = Math.max(0, totalLiquid - goalLockedAssets);
+      const totalAssets = totalLiquid + totalInvested;
       const history = this.getHistory(3);
       const avgBurn = history.reduce((sum, m) => sum + m.expense, 0) / (history.length || 1);
 
@@ -1473,10 +1506,12 @@ class StorageService {
           netWorth: totalAssets,
           totalAssets,
           totalInvestments: totalInvested,
-          liquidAssets: liquid,
+          liquidAssets: freeLiquidAssets,
           investedAssets: totalInvested,
+          goalLockedAssets,
+          freeLiquidAssets,
           monthlyBurnRate: avgBurn,
-          runwayMonths: avgBurn > 0 ? liquid / avgBurn : 0,
+          runwayMonths: avgBurn > 0 ? freeLiquidAssets / avgBurn : 0,
           savingsRate: 0,
           recommendations: []
       };

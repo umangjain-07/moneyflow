@@ -16,7 +16,7 @@ export const Auth: React.FC = () => {
     setError('');
 
     if (!formData.username || !formData.password) { setError('Please fill in all fields'); return; }
-    if (formData.password.length < 4) { setError('Password must be at least 4 characters'); return; }
+    if (isLogin && formData.password.length < 4) { setError('Password must be at least 4 characters'); return; }
 
     if (!isLogin && formData.password !== formData.confirmPassword) {
         setError('Passwords do not match');

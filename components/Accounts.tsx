@@ -8,6 +8,7 @@ export const Accounts: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [settings, setSettings] = useState(db.getSettings());
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [newAccount, setNewAccount] = useState<Partial<Account>>({
     name: '',
     type: 'BANK',
@@ -37,6 +38,13 @@ export const Accounts: React.FC = () => {
     db.saveAccount(newAccount as Account);
     setIsModalOpen(false);
     setNewAccount({ name: '', type: 'BANK', currency: settings.currency, initialBalance: 0 });
+  };
+
+  const handleDeleteAccount = (account: Account) => {
+    if (confirm(`Delete ${account.name} and all related transactions?`)) {
+      db.deleteAccount(account.id);
+      setActiveMenuId(null);
+    }
   };
 
   const getIcon = (type: string) => {
@@ -94,10 +102,24 @@ export const Accounts: React.FC = () => {
                     <div className={`p-3 rounded-xl border border-white/5 bg-slate-800 text-slate-300 shadow-inner group-hover:scale-110 transition-transform duration-300`}>
                         {getIcon(acc.type)}
                     </div>
-                    <button className="text-slate-600 hover:text-slate-300 transition-colors bg-slate-800/50 p-1.5 rounded-lg opacity-0 group-hover:opacity-100">
+                    <button
+                      onClick={() => setActiveMenuId(prev => prev === acc.id ? null : acc.id)}
+                      className="text-slate-600 hover:text-slate-300 transition-colors bg-slate-800/50 p-1.5 rounded-lg opacity-0 group-hover:opacity-100"
+                    >
                         <MoreVertical size={16} />
                     </button>
                  </div>
+
+                 {activeMenuId === acc.id && (
+                    <div className="absolute right-4 top-14 z-10 bg-slate-950 border border-slate-800 rounded-xl shadow-xl p-2">
+                        <button
+                          onClick={() => handleDeleteAccount(acc)}
+                          className="w-full px-3 py-2 text-left text-rose-400 hover:text-rose-300 hover:bg-slate-900 rounded-lg text-xs font-bold uppercase tracking-widest"
+                        >
+                          Delete Account
+                        </button>
+                    </div>
+                 )}
 
                  <div className="relative z-10">
                      <div className="flex justify-between items-center">

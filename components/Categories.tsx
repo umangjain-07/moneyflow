@@ -119,6 +119,10 @@ export const Categories: React.FC = () => {
     if (!analysisTarget) return null;
     let dataTxs: Transaction[] = [];
     let name = '', color = '#3b82f6', icon = '📊';
+    const getEffectiveAmount = (t: Transaction) => {
+        if (t.type !== 'EXPENSE') return t.amount;
+        return Math.max(0, t.amount - (t.sponsoredAmount || 0));
+    };
 
     if (analysisTarget.type === 'CATEGORY') {
         const cat = categories.find(c => c.id === analysisTarget.id);
@@ -133,7 +137,7 @@ export const Categories: React.FC = () => {
     }
 
     dataTxs.sort((a,b) => b.date.localeCompare(a.date));
-    const totalAmount = dataTxs.reduce((s, t) => s + t.amount, 0);
+    const totalAmount = dataTxs.reduce((s, t) => s + getEffectiveAmount(t), 0);
     
     // BUILD STACKED TREND DATA
     const trendMap: Record<string, any> = {};
@@ -157,8 +161,9 @@ export const Categories: React.FC = () => {
         }
         
         subElementKeys.add(subKey);
-        trendMap[monthKey][subKey] = (trendMap[monthKey][subKey] || 0) + t.amount;
-        trendMap[monthKey].total += t.amount;
+        const effective = getEffectiveAmount(t);
+        trendMap[monthKey][subKey] = (trendMap[monthKey][subKey] || 0) + effective;
+        trendMap[monthKey].total += effective;
     });
 
     const trendData = Object.values(trendMap).sort((a: any, b: any) => a.rawDate.localeCompare(b.rawDate)).slice(-12);
@@ -167,11 +172,15 @@ export const Categories: React.FC = () => {
     let breakdownData: any[] = [];
     if (analysisTarget.type === 'GROUP') {
         const catMap: Record<string, number> = {};
-        dataTxs.forEach(t => { const c = categories.find(c=>c.id===t.categoryId)?.name || 'Unknown'; catMap[c] = (catMap[c]||0)+t.amount; });
+        dataTxs.forEach(t => { const c = categories.find(c=>c.id===t.categoryId)?.name || 'Unknown'; catMap[c] = (catMap[c]||0)+getEffectiveAmount(t); });
         breakdownData = Object.entries(catMap).map(([n,v])=>({name:n, value:v})).sort((a,b)=>b.value-a.value).slice(0, 8);
     } else {
         const tagMap: Record<string, number> = {};
-        dataTxs.forEach(t => { if(t.tags?.length) t.tags.forEach(tg => tagMap[tg] = (tagMap[tg]||0)+(t.amount/t.tags!.length)); else tagMap['No Tag'] = (tagMap['No Tag']||0)+t.amount; });
+        dataTxs.forEach(t => {
+            const effective = getEffectiveAmount(t);
+            if(t.tags?.length) t.tags.forEach(tg => tagMap[tg] = (tagMap[tg]||0)+(effective/t.tags!.length));
+            else tagMap['No Tag'] = (tagMap['No Tag']||0)+effective;
+        });
         breakdownData = Object.entries(tagMap).map(([n,v])=>({name:n, value:v})).sort((a,b)=>b.value-a.value).slice(0,8);
     }
 

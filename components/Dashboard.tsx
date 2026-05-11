@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db, subscribe, getEnv } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
-import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend, Cell } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -37,6 +37,7 @@ export const Dashboard: React.FC = () => {
   const [historyRange, setHistoryRange] = useState<number | 'ALL'>(6);
   const [history, setHistory] = useState<any[]>([]);
   const [showGoalModal, setShowGoalModal] = useState(false);
+    const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [newGoal, setNewGoal] = useState<Partial<Goal>>({ name: '', targetAmount: 0, currentAmount: 0, color: '#10B981' });
 
   // AI State
@@ -76,7 +77,10 @@ export const Dashboard: React.FC = () => {
       const today = new Date();
       const dayOfMonth = today.getDate();
       
-      const prompt = `Act as a world-class financial analyst. Analyze this financial snapshot and provide 3 high-impact, professional insights.
+    const freeLiquid = health.freeLiquidAssets ?? health.liquidAssets;
+    const goalLocked = health.goalLockedAssets || 0;
+
+    const prompt = `Act as a world-class financial analyst. Analyze this financial snapshot and provide 3 high-impact, professional insights.
       User's Base Currency: ${settings.currency} (${settings.currencySymbol})
       
       CRITICAL CONTEXT:
@@ -89,9 +93,14 @@ export const Dashboard: React.FC = () => {
       - This Month Income: ${currentMonthStats.income}
       - This Month Expenses: ${currentMonthStats.expense}
       - Invested: ${currentMonthStats.invested}
-      - Liquid Cash: ${health.liquidAssets}
+    - Liquid Cash (Free): ${freeLiquid}
+    - Goal Locked Cash: ${goalLocked}
       - Goals: ${goals.map(g => `${g.name}: ${(g.currentAmount/g.targetAmount*100).toFixed(0)}%`).join(', ') || 'No active goals'}
-      - Last 5 Activities: ${transactions.slice(0, 5).map(t => `${t.description}: ${t.amount}`).join(', ')}
+      - Last 5 Activities: ${transactions.slice(0, 5).map(t => {
+          const net = t.type === 'EXPENSE' ? Math.max(0, t.amount - (t.sponsoredAmount || 0)) : t.amount;
+          const sponsorNote = t.type === 'EXPENSE' && t.sponsoredAmount ? ` (sponsored ${t.sponsoredAmount})` : '';
+          return `${t.description}: ${net}${sponsorNote}`;
+      }).join(', ')}
       
       Return a JSON object with a single key "insights" which is an array of 3 objects: { title: string, description: string, type: 'TIP' | 'WARNING' | 'OPPORTUNITY' }.`;
 
@@ -148,6 +157,26 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+    const handleOpenNewGoal = () => {
+        setEditingGoalId(null);
+        setNewGoal({ name: '', targetAmount: 0, currentAmount: 0, color: '#10B981' });
+        setShowGoalModal(true);
+    };
+
+    const handleOpenEditGoal = (goal: Goal) => {
+        setEditingGoalId(goal.id);
+        setNewGoal({ ...goal });
+        setShowGoalModal(true);
+    };
+
+    const handleCustomGoalAdd = (goal: Goal) => {
+        const raw = prompt(`Add amount to ${goal.name}`, '');
+        if (!raw) return;
+        const amount = parseFloat(raw);
+        if (isNaN(amount) || amount <= 0) return;
+        db.saveGoal({ ...goal, currentAmount: Math.min(goal.currentAmount + amount, goal.targetAmount) });
+    };
+
   useEffect(() => {
     loadData();
     const unsubscribe = subscribe(loadData);
@@ -170,7 +199,10 @@ export const Dashboard: React.FC = () => {
               const txKey = `${parseInt(parts[0])}-${String(parseInt(parts[1])).padStart(2,'0')}`;
               if (txKey === currentKey) {
                   const acc = accounts.find(a => a.id === t.accountId);
-                  const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+                  const rawAmount = t.type === 'EXPENSE'
+                      ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                      : t.amount;
+                  const val = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
                   const isTransfer = t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out';
                   if (!isTransfer) {
                      if (t.type === 'INCOME') income += val;
@@ -205,7 +237,10 @@ export const Dashboard: React.FC = () => {
               const isTransfer = t.categoryId === 'transfer_out' || t.categoryId === 'transfer_in';
               if (isTransfer) return;
               const acc = accounts.find(a => a.id === t.accountId);
-              const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+              const rawAmount = t.type === 'EXPENSE'
+                  ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+                  : t.amount;
+              const val = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
               if (t.type === 'EXPENSE') {
                   const cat = categories.find(c => c.id === t.categoryId);
                   if (cat?.necessity === 'NEED') totalNeeds += val;
@@ -226,7 +261,7 @@ export const Dashboard: React.FC = () => {
       const targetThriving = (avgNeeds + avgWants + avgInvest) * emergencyMonths;
       
       const cycleSize = Math.max(1, targetThriving);
-      const totalLiquidCash = health.liquidAssets;
+    const totalLiquidCash = health.freeLiquidAssets ?? health.liquidAssets;
       
       // Cyclic Logic:
       // Level 0: 0 -> Thrive Target (filling first time)
@@ -251,7 +286,7 @@ export const Dashboard: React.FC = () => {
           level: displayLevel,
           isSurplus: displayLevel > 0
       };
-  }, [transactions, categories, accounts, settings, health.liquidAssets]);
+    }, [transactions, categories, accounts, settings, health.liquidAssets, health.freeLiquidAssets]);
 
   const rule503020 = useMemo(() => {
       const { income, expense, invested } = currentMonthStats;
@@ -267,7 +302,8 @@ export const Dashboard: React.FC = () => {
              if (txKey === currentKey && t.type === 'EXPENSE') {
                  const cat = categories.find(c => c.id === t.categoryId);
                  const acc = accounts.find(a => a.id === t.accountId);
-                 const val = db.convertAmount(t.amount, acc?.currency || settings.currency, settings.currency);
+                                 const rawAmount = Math.max(0, t.amount - (t.sponsoredAmount || 0));
+                                 const val = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
                  if (cat?.necessity === 'NEED') needs += val;
                  else wants += val;
              }
@@ -278,7 +314,10 @@ export const Dashboard: React.FC = () => {
 
   const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const liquidPct = health.netWorth > 0 ? (health.liquidAssets / health.netWorth) * 100 : 0;
+    const freeLiquid = health.freeLiquidAssets ?? health.liquidAssets;
+    const goalLocked = health.goalLockedAssets || 0;
+    const liquidPct = health.netWorth > 0 ? (freeLiquid / health.netWorth) * 100 : 0;
+    const goalPct = health.netWorth > 0 ? (goalLocked / health.netWorth) * 100 : 0;
   const investedPct = health.netWorth > 0 ? (health.investedAssets / health.netWorth) * 100 : 0;
 
   return (
@@ -300,8 +339,13 @@ export const Dashboard: React.FC = () => {
                       <div className="flex justify-between items-end mb-2.5">
                           <div className="flex gap-4">
                               <div className="flex flex-col">
-                                  <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">Liquid</span>
-                                  <span className="text-lg font-bold text-slate-100">{formatMoney(health.liquidAssets)}</span>
+                                  <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">Free Liquid</span>
+                                  <span className="text-lg font-bold text-slate-100">{formatMoney(freeLiquid)}</span>
+                              </div>
+                              <div className="w-[1px] h-8 bg-slate-800 self-center"></div>
+                              <div className="flex flex-col">
+                                  <span className="text-[10px] text-amber-400 font-black uppercase tracking-widest">Goal Locked</span>
+                                  <span className="text-lg font-bold text-slate-100">{formatMoney(goalLocked)}</span>
                               </div>
                               <div className="w-[1px] h-8 bg-slate-800 self-center"></div>
                               <div className="flex flex-col">
@@ -310,13 +354,19 @@ export const Dashboard: React.FC = () => {
                               </div>
                           </div>
                           <span className="text-xs font-mono text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                              {liquidPct.toFixed(0)}% Liq / {investedPct.toFixed(0)}% Inv
+                              {liquidPct.toFixed(0)}% Free / {goalPct.toFixed(0)}% Goals / {investedPct.toFixed(0)}% Inv
                           </span>
                       </div>
                       <div className="h-2.5 w-full bg-slate-900 rounded-full flex overflow-hidden border border-slate-800 shadow-inner">
                           <div 
                             className="h-full bg-emerald-500 transition-all duration-1000 ease-out relative group" 
                             style={{ width: `${liquidPct}%` }}
+                          >
+                             <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                          </div>
+                          <div 
+                            className="h-full bg-amber-500 transition-all duration-1000 ease-out relative group" 
+                            style={{ width: `${goalPct}%` }}
                           >
                              <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                           </div>
@@ -651,7 +701,7 @@ export const Dashboard: React.FC = () => {
               <h3 className="text-white font-bold flex items-center gap-2 text-lg md:text-xl">
                   <Target size={20} className="text-rose-400" /> Savings Goals
               </h3>
-              <button onClick={() => setShowGoalModal(true)} className="text-[10px] font-black uppercase tracking-widest bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-xl border border-slate-800 transition-all flex items-center gap-2 shadow-lg">
+              <button onClick={handleOpenNewGoal} className="text-[10px] font-black uppercase tracking-widest bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-xl border border-slate-800 transition-all flex items-center gap-2 shadow-lg">
                   <Plus size={14} /> New Objective
               </button>
           </div>
@@ -661,7 +711,10 @@ export const Dashboard: React.FC = () => {
                   const percent = Math.min(100, (goal.currentAmount / goal.targetAmount) * 100);
                   return (
                       <div key={goal.id} className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 group relative hover:border-slate-600 shadow-2xl transition-all duration-300 animate-slide-up" style={{animationDelay: `${idx * 100}ms`}}>
-                          <button onClick={() => handleDeleteGoal(goal.id)} className="absolute top-4 right-4 p-2 text-slate-600 hover:text-rose-500 bg-slate-950/50 rounded-full border border-slate-800 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14} /></button>
+                          <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                              <button onClick={() => handleOpenEditGoal(goal)} className="p-2 text-slate-600 hover:text-emerald-400 bg-slate-950/50 rounded-full border border-slate-800"><Edit2 size={14} /></button>
+                              <button onClick={() => handleDeleteGoal(goal.id)} className="p-2 text-slate-600 hover:text-rose-500 bg-slate-950/50 rounded-full border border-slate-800"><Trash2 size={14} /></button>
+                          </div>
                           
                           <div className="flex justify-between items-start mb-6">
                               <div className="flex items-center gap-4">
@@ -695,10 +748,10 @@ export const Dashboard: React.FC = () => {
                                     + {settings.currencySymbol}100
                                 </button>
                                 <button 
-                                    onClick={() => db.saveGoal({ ...goal, currentAmount: Math.min(goal.currentAmount + 1000, goal.targetAmount) })}
+                                    onClick={() => handleCustomGoalAdd(goal)}
                                     className="py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
                                 >
-                                    + {settings.currencySymbol}1k
+                                    Custom
                                 </button>
                           </div>
                       </div>
@@ -711,7 +764,7 @@ export const Dashboard: React.FC = () => {
       {showGoalModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-in fade-in duration-300">
               <div className="bg-[#0f172a] w-full max-w-md rounded-3xl border border-slate-800 p-8 shadow-2xl animate-in zoom-in-95 duration-300">
-                  <h2 className="text-2xl font-black text-white mb-8 uppercase tracking-tight">New Asset Objective</h2>
+                  <h2 className="text-2xl font-black text-white mb-8 uppercase tracking-tight">{editingGoalId ? 'Edit Goal' : 'New Asset Objective'}</h2>
                   <div className="space-y-6">
                       <div>
                           <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Objective Name</label>
@@ -723,8 +776,8 @@ export const Dashboard: React.FC = () => {
                             <input type="number" className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:ring-2 ring-emerald-500/20 shadow-inner" placeholder="0.00" value={newGoal.targetAmount || ''} onChange={e => setNewGoal({...newGoal, targetAmount: parseFloat(e.target.value)})} />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Initial Base</label>
-                            <input type="number" className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:ring-2 ring-emerald-500/20 shadow-inner" placeholder="0.00" value={newGoal.currentAmount || ''} onChange={e => setNewGoal({...newGoal, currentAmount: parseFloat(e.target.value)})} />
+                                                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Current Amount</label>
+                                                        <input type="number" className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white outline-none focus:ring-2 ring-emerald-500/20 shadow-inner" placeholder="0.00" value={newGoal.currentAmount || ''} onChange={e => setNewGoal({...newGoal, currentAmount: parseFloat(e.target.value)})} />
                         </div>
                       </div>
                       <div>
@@ -736,12 +789,19 @@ export const Dashboard: React.FC = () => {
                           </div>
                       </div>
                       <div className="flex gap-4 mt-10">
-                          <button onClick={() => setShowGoalModal(false)} className="flex-1 py-4 text-slate-500 font-black uppercase text-xs tracking-widest hover:text-white transition-colors">Discard</button>
+                                                    <button onClick={() => { setShowGoalModal(false); setEditingGoalId(null); setNewGoal({ name: '', targetAmount: 0, currentAmount: 0, color: '#10B981' }); }} className="flex-1 py-4 text-slate-500 font-black uppercase text-xs tracking-widest hover:text-white transition-colors">Discard</button>
                           <button 
-                            onClick={() => { if(!newGoal.name || !newGoal.targetAmount) return; db.saveGoal(newGoal as Goal); setShowGoalModal(false); setNewGoal({ name: '', targetAmount: 0, currentAmount: 0, color: '#10B981' }); }} 
+                                                        onClick={() => { 
+                                                            if(!newGoal.name || !newGoal.targetAmount) return; 
+                                                            const safeCurrent = Math.max(0, Math.min(newGoal.currentAmount || 0, newGoal.targetAmount || 0));
+                                                            db.saveGoal({ ...(newGoal as Goal), id: editingGoalId || (newGoal as Goal).id, currentAmount: safeCurrent });
+                                                            setShowGoalModal(false);
+                                                            setEditingGoalId(null);
+                                                            setNewGoal({ name: '', targetAmount: 0, currentAmount: 0, color: '#10B981' }); 
+                                                        }} 
                             className="flex-1 py-4 bg-emerald-600 text-slate-950 font-black uppercase text-xs tracking-widest rounded-2xl hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-900/20"
                           >
-                            Activate Goal
+                                                        {editingGoalId ? 'Save Changes' : 'Activate Goal'}
                           </button>
                       </div>
                   </div>

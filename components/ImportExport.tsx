@@ -147,7 +147,7 @@ export const ImportExport: React.FC = () => {
 
   const handleExport = () => {
       const exportData = db.getTransactions().map(t => ({
-          Date: t.date, Amount: t.amount, Type: t.type, Description: t.description,
+          Date: t.date, Amount: t.amount, SponsoredAmount: t.sponsoredAmount || 0, Type: t.type, Description: t.description,
           Category: categories.find(c => c.id === t.categoryId)?.name || 'Uncategorized',
           Account: accounts.find(a => a.id === t.accountId)?.name || 'Unknown'
       }));
