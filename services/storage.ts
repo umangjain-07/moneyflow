@@ -64,7 +64,7 @@ const listeners: Set<Listener> = new Set();
 const notify = () => listeners.forEach(l => l());
 export const subscribe = (l: Listener) => { listeners.add(l); return () => { listeners.delete(l); }; };
 
-const DEFAULT_SETTINGS: AppSettings = { currency: 'INR', currencySymbol: '₹', emergencyFundTargetMonths: 6, savingsGoalPercent: 20 };
+const DEFAULT_SETTINGS: AppSettings = { currency: 'INR', currencySymbol: '₹', emergencyFundTargetMonths: 6, savingsGoalPercent: 20, betaLabEnabled: false };
 
 // Updated Static Rates (Approximate Market Values)
 // Base: 1 USD

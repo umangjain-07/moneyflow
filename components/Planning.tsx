@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
-import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate } from '../types';
+import { Transaction, Category, Account, FinancialPlan, CategoryBudgetConfig, BudgetTemplate, Goal } from '../types';
 import { Calendar, Target, Edit2, Save, Trash2, Plus, ArrowRight, CheckCircle2, AlertTriangle, Shield, Wallet, DollarSign, X, Lock, ShoppingBag, PieChart, Sliders, TrendingUp, ChevronDown, Calculator, Briefcase, Zap, Sparkles, Repeat, Clock, Receipt, CreditCard, ChevronLeft, ChevronRight, History, Globe, RotateCcw, Settings2, Copy, BookTemplate, SaveAll, LayoutTemplate, MousePointerClick, Check, CalendarRange, PenTool, LayoutDashboard, ArrowDown, Power, Filter, Infinity, Gem, ToggleLeft, ToggleRight, Circle, Activity, RefreshCw, AlertCircle } from 'lucide-react';
 
 export const Planning: React.FC = () => {
@@ -9,6 +9,7 @@ export const Planning: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+    const [goals, setGoals] = useState<Goal[]>([]);
   
   // Plan State
   const [plan, setPlan] = useState<FinancialPlan | null>(null);
@@ -78,6 +79,7 @@ export const Planning: React.FC = () => {
     setCategories(cats);
     setTransactions(db.getTransactions());
     setAccounts(db.getAccounts());
+    setGoals(db.getGoals());
     
     // Calculate Historical Averages
     const txs = db.getTransactions();
@@ -131,6 +133,7 @@ export const Planning: React.FC = () => {
             setCategories(db.getCategories());
             setTransactions(db.getTransactions());
             setAccounts(db.getAccounts());
+            setGoals(db.getGoals());
         }
     });
     return () => {
@@ -460,7 +463,9 @@ export const Planning: React.FC = () => {
           if (conf.period === 'DAILY') displayValue = conf.allocatedAmount / 30;
       }
 
-      return (
+    const isOverallView = dashboardView !== 'MONTH';
+
+    return (
           <div key={conf.categoryId} className={`flex flex-col gap-2 p-3 rounded-xl border transition-colors ${isIgnored ? 'bg-slate-950/30 border-slate-800/50 opacity-60' : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'}`}>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-lg">{cat.icon}</div>
@@ -842,6 +847,8 @@ export const Planning: React.FC = () => {
               : t.amount;
           return s + db.convertAmount(rawAmount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency);
       }, 0);
+      const goalFeedTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && t.type === 'GOAL');
+      const goalFeedTotal = goalFeedTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
 
       const netDeviation = totalAllocated - totalSpent;
       const isPositiveDeviation = netDeviation >= 0;
@@ -853,6 +860,8 @@ export const Planning: React.FC = () => {
       const oneTimeGroup = activeConfigs.filter(c => isOneTime(c) && c.type !== 'SUBSCRIPTION'); // Exclude subs from one-time visual
       const fixedGroup = activeConfigs.filter(c => c.type === 'FIXED' && !isOneTime(c));
       const variableGroup = activeConfigs.filter(c => c.type === 'VARIABLE' && !isOneTime(c));
+
+    const isOverallView = dashboardView !== 'MONTH';
 
       return (
           <div className="space-y-6 animate-in fade-in">
@@ -867,14 +876,22 @@ export const Planning: React.FC = () => {
                             </h2>
                             {dashboardView !== 'ALL' && (
                                 <div className="flex items-center justify-center gap-2 mt-1">
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
-                                        planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
-                                        planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
-                                        'bg-slate-800 text-slate-400 border-slate-700'
-                                    }`}>
-                                        {planMeta.label}
-                                    </span>
-                                    {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
+                                    {isOverallView ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border bg-slate-800 text-slate-400 border-slate-700">
+                                            Overall
+                                        </span>
+                                    ) : (
+                                        <>
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${
+                                                planMeta.type === 'LINKED' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                                planMeta.type === 'GLOBAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                                'bg-slate-800 text-slate-400 border-slate-700'
+                                            }`}>
+                                                {planMeta.label}
+                                            </span>
+                                            {planMeta.type === 'LINKED' && <Globe size={10} className="text-indigo-400"/>}
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -926,6 +943,43 @@ export const Planning: React.FC = () => {
                         </p>
                     </div>
                </div>
+
+               {goalFeedTxs.length > 0 && (
+                   <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                       <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
+                           <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                               <Target size={16} className="text-amber-400" /> GOALS
+                           </h3>
+                           <span className="text-xs font-mono text-amber-400">{formatMoney(goalFeedTotal)}</span>
+                       </div>
+                       <div className="p-6 space-y-3">
+                           {goalFeedTxs.map(tx => {
+                               const goal = goals.find(g => g.id === tx.goalId);
+                               const account = accounts.find(a => a.id === tx.accountId);
+                               const amount = db.convertAmount(tx.amount, account?.currency || settings.currency, settings.currency);
+                               return (
+                                   <div key={tx.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-800 bg-slate-900/20">
+                                       <div className="flex items-center gap-3">
+                                           <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                                               <Target size={16} />
+                                           </div>
+                                           <div>
+                                               <p className="text-sm font-bold text-slate-200">{goal?.name || 'GOALS'}</p>
+                                               <p className="text-[10px] text-slate-500">{tx.date} • {account?.name || 'Unknown'}</p>
+                                           </div>
+                                       </div>
+                                       <div className="text-right">
+                                           <p className="text-sm font-bold text-amber-400">{formatMoney(amount)}</p>
+                                           {tx.description && tx.description !== 'GOALS' && (
+                                               <p className="text-[10px] text-slate-500">{tx.description}</p>
+                                           )}
+                                       </div>
+                                   </div>
+                               );
+                           })}
+                       </div>
+                   </div>
+               )}
 
                {/* SUBSCRIPTIONS SECTION - Full Width */}
                {subGroup.length > 0 && (

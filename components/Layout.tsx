@@ -60,6 +60,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleCurrencySelect = (c: string) => { db.updateSettings({ currency: c as any }); };
   const handleEmergencyFundChange = (months: number) => { db.updateSettings({ emergencyFundTargetMonths: months }); };
   const handleSavingsGoalChange = (val: number) => { db.updateSettings({ savingsGoalPercent: val }); };
+  const handleBetaLabToggle = () => { db.updateSettings({ betaLabEnabled: !settings.betaLabEnabled }); };
 
   const navLinks = [
     { to: '/', icon: LayoutDashboard, label: 'Home' },
@@ -69,6 +70,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     { to: '/reports', icon: PieChart, label: 'Report' },
     { to: '/categories', icon: Tags, label: 'Cats' },
     { to: '/import', icon: Upload, label: 'Import' },
+    ...(settings.betaLabEnabled ? [{ to: '/beta', icon: Zap, label: 'Beta' }] : [])
   ];
 
   return (
@@ -273,8 +275,30 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </div>
                 </div>
 
-                {/* 3. DATA & ACCOUNT ACTIONS */}
-                <div className="space-y-3 pt-4 border-t border-slate-800/50">
+                  {/* 3. BETA LAB */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Beta Lab</h3>
+                    <button
+                      onClick={handleBetaLabToggle}
+                      className="w-full flex items-center justify-between p-4 bg-slate-900/50 hover:bg-slate-900 rounded-2xl border border-slate-800 transition-all"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`p-2.5 rounded-xl transition-colors ${settings.betaLabEnabled ? 'bg-amber-500/10 text-amber-400' : 'bg-slate-800 text-slate-500'}`}>
+                          <Zap size={18} />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-sm font-bold text-slate-200">Enable Beta Lab</p>
+                          <p className="text-[10px] text-slate-500 uppercase font-bold mt-0.5">Prototype infographics gallery</p>
+                        </div>
+                      </div>
+                      <div className={`w-12 h-6 rounded-full p-1 transition-all duration-500 ${settings.betaLabEnabled ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]' : 'bg-slate-700'}`}>
+                        <div className={`w-4 h-4 bg-white rounded-full shadow-lg transition-transform duration-300 transform ${settings.betaLabEnabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* 4. DATA & ACCOUNT ACTIONS */}
+                  <div className="space-y-3 pt-4 border-t border-slate-800/50">
                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Account & Connectivity</h3>
                     
                     {/* Cloud Sync Toggle Mockup-style */}

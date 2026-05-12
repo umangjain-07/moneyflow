@@ -9,6 +9,7 @@ import { ImportExport } from './components/ImportExport';
 import { Categories } from './components/Categories';
 import { Reports } from './components/Reports';
 import { Planning } from './components/Planning';
+import { BetaLab } from './components/BetaLab';
 import { Auth } from './components/Auth';
 import { db, subscribe } from './services/storage';
 import { AlertTriangle, RefreshCw, Loader2, Cloud } from 'lucide-react';
@@ -87,6 +88,7 @@ const AppContent: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(db.isLoggedIn());
   const [isReady, setIsReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState(db.getSyncStatus());
+  const [settings, setSettings] = useState(db.getSettings());
 
   useEffect(() => {
     // Wait for DB init
@@ -96,6 +98,7 @@ const AppContent: React.FC = () => {
     const unsubscribe = subscribe(() => {
       setIsAuthenticated(db.isLoggedIn());
       setSyncStatus(db.getSyncStatus());
+      setSettings(db.getSettings());
     });
     return () => unsubscribe();
   }, []);
@@ -124,6 +127,7 @@ const AppContent: React.FC = () => {
           <Route path="/categories" element={<Categories />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/import" element={<ImportExport />} />
+          {settings.betaLabEnabled && <Route path="/beta" element={<BetaLab />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         

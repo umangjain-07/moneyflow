@@ -88,6 +88,7 @@ export interface AppSettings {
   currencySymbol: string;
   emergencyFundTargetMonths: number; 
   savingsGoalPercent: number;
+  betaLabEnabled?: boolean;
   updatedAt?: string;
 }
 

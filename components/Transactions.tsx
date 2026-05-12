@@ -62,7 +62,7 @@ const TransactionItem: React.FC<{
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-slate-500">{tx.date.substring(5)}</span>
                             {tx.type === 'GOAL' ? (
-                              <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Goal Feed</span>
+                              <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">GOALS</span>
                             ) : (
                               category && <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded-sm">{category.name}</span>
                             )}
@@ -107,7 +107,7 @@ const TransactionItem: React.FC<{
                   }}
                 >
                 <span>{tx.type === 'GOAL' ? '🎯' : (category?.icon || '🏷️')}</span>
-                {tx.type === 'GOAL' ? 'Goal Feed' : (category?.name || 'General')}
+                {tx.type === 'GOAL' ? 'GOALS' : (category?.name || 'General')}
               </span>
           </td>
           <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
@@ -324,8 +324,7 @@ export const Transactions: React.FC = () => {
           hasGoalContribution = true;
       }
 
-        let catId = formData.categoryId;
-        if (mode === 'GOAL') catId = 'goal_feed';
+      let catId = formData.categoryId;
       if (!catId) {
           if (mode === 'GOAL') catId = 'goal_feed';
           else {
@@ -339,7 +338,7 @@ export const Transactions: React.FC = () => {
       db.addTransaction({
         date: formData.date,
         amount: amount,
-        description: formData.description || (mode === 'GOAL' ? 'Goal Feed' : ''),
+        description: formData.description || (mode === 'GOAL' ? 'GOALS' : ''),
         categoryId: catId,
         accountId: formData.accountId,
         type: mode,
@@ -419,7 +418,7 @@ export const Transactions: React.FC = () => {
                       <option value="INCOME">Income</option>
                       <option value="EXPENSE">Expense</option>
                       <option value="INVESTMENT">Investment</option>
-                       <option value="GOAL">Goal Feed</option>
+                      <option value="GOAL">GOALS</option>
                       <option value="TRANSFER">Transfer</option>
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
