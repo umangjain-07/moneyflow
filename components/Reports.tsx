@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from 'recharts';
+import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ScatterChart, Scatter } from 'recharts';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Account, Category } from '../types';
 import { TrendingUp, TrendingDown, Wallet, Calendar, ArrowDownCircle, ArrowUpCircle, PiggyBank, Activity, PieChart as PieIcon, BarChart3, Filter, Flame } from 'lucide-react';
@@ -26,22 +26,23 @@ const ReportCard = ({ title, value, subtext, icon: Icon, colorClass, delay }: an
 );
 
 export const Reports: React.FC = () => {
+    const baseSettings = db.getSettings();
+    const [settings, setSettings] = useState(baseSettings);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   
   // Date State
-  const [timeRange, setTimeRange] = useState<string>('THIS_MONTH');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-  const [pickedMonth, setPickedMonth] = useState('');
+    const [timeRange, setTimeRange] = useState<string>(baseSettings.reportsTimeRange || 'THIS_MONTH');
+    const [customStart, setCustomStart] = useState(baseSettings.reportsCustomStart || '');
+    const [customEnd, setCustomEnd] = useState(baseSettings.reportsCustomEnd || '');
+    const [pickedMonth, setPickedMonth] = useState(baseSettings.reportsPickedMonth || '');
 
   // Interactive State for Daily Chart
-  const [spendingMode, setSpendingMode] = useState<'ACTIVITY' | 'BURNDOWN'>('ACTIVITY');
-  
-  const settings = db.getSettings();
+    const [spendingMode, setSpendingMode] = useState<'ACTIVITY' | 'BURNDOWN' | 'SCATTER'>(baseSettings.reportsSpendingMode || 'ACTIVITY');
 
   const loadData = () => {
+        setSettings(db.getSettings());
     setTransactions(db.getTransactions());
     setCategories(db.getCategories());
     setAccounts(db.getAccounts());
@@ -53,17 +54,32 @@ export const Reports: React.FC = () => {
     
     // Init default custom dates
     const now = new Date();
-    setCustomEnd(now.toISOString().split('T')[0]);
-    now.setMonth(now.getMonth() - 1);
-    setCustomStart(now.toISOString().split('T')[0]);
-    setPickedMonth(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    if (!customEnd) setCustomEnd(now.toISOString().split('T')[0]);
+    if (!customStart) {
+        const lastMonth = new Date(now);
+        lastMonth.setMonth(lastMonth.getMonth() - 1);
+        setCustomStart(lastMonth.toISOString().split('T')[0]);
+    }
+    if (!pickedMonth) setPickedMonth(new Date().toISOString().slice(0, 7)); // YYYY-MM
 
     return () => unsubscribe();
   }, []);
 
+    useEffect(() => {
+        db.updateSettings({
+                reportsTimeRange: timeRange,
+                reportsSpendingMode: spendingMode,
+                reportsPickedMonth: pickedMonth,
+                reportsCustomStart: customStart,
+                reportsCustomEnd: customEnd
+        });
+    }, [timeRange, spendingMode, pickedMonth, customStart, customEnd]);
+
   const formatMoney = (val: number) => {
     return `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
+
+    const getAccountCurrency = (accountId: string) => accounts.find(a => a.id === accountId)?.currency || settings.currency;
 
   const filteredTransactions = useMemo(() => {
     const now = new Date();
@@ -133,12 +149,6 @@ export const Reports: React.FC = () => {
   }, [filteredTransactions, accounts, categories, settings.currency]);
 
   // Chart: Capital Allocation (Needs, Wants, Investments)
-  const allocationData = useMemo(() => [
-      { name: 'Needs', value: stats.needs, color: '#10b981' }, 
-      { name: 'Wants', value: stats.wants, color: '#f59e0b' }, 
-      { name: 'Investments', value: stats.investment, color: '#8b5cf6' },
-  ].filter(d => d.value > 0), [stats]);
-
   // Chart: Category Breakdown (Expense + Investment)
   const categoryData = useMemo(() => {
       const agg: Record<string, { name: string, value: number, color: string, type: string, icon: string }> = {};
@@ -266,6 +276,112 @@ export const Reports: React.FC = () => {
       });
   }, [filteredTransactions, accounts, settings.currency, stats.income, timeRange, pickedMonth]);
 
+  const reportRangeLabel = useMemo(() => {
+      switch (timeRange) {
+          case 'THIS_MONTH':
+              return 'This Month';
+          case 'LAST_MONTH':
+              return 'Last Month';
+          case 'LAST_3_MONTHS':
+              return 'Last 3M';
+          case 'LAST_6_MONTHS':
+              return 'Last 6M';
+          case 'THIS_YEAR':
+              return 'This Year';
+          case 'ALL':
+              return 'All Time';
+          case 'PICK_MONTH':
+              return pickedMonth || 'Picked Month';
+          case 'CUSTOM_RANGE':
+              if (customStart && customEnd) return `${customStart} to ${customEnd}`;
+              return 'Custom Range';
+          default:
+              return 'Range';
+      }
+  }, [timeRange, pickedMonth, customStart, customEnd]);
+
+  const pulseScatterData = useMemo(() => {
+      const data: Array<{ day: number; amount: number }> = [];
+      filteredTransactions.forEach(t => {
+          if (t.type !== 'EXPENSE') return;
+          const d = new Date(t.date);
+          const day = d.getDate();
+          if (day < 1 || day > 31) return;
+
+          const currency = getAccountCurrency(t.accountId);
+          const net = Math.max(0, t.amount - (t.sponsoredAmount || 0));
+          const amount = db.convertAmount(net, currency, settings.currency);
+          data.push({ day, amount });
+      });
+      return data;
+  }, [filteredTransactions, settings.currency, accounts]);
+
+  const pulseScatterPointCount = pulseScatterData.length;
+
+  const radarTargetData = useMemo(
+      () => [
+          { metric: 'Spending', value: 50 },
+          { metric: 'Investing', value: 20 },
+          { metric: 'Goals', value: 10 },
+          { metric: 'Sponsored', value: 0 },
+          { metric: 'Unspent', value: 20 }
+      ],
+      []
+  );
+
+  const radarKpis = useMemo(() => {
+      let income = 0;
+      let expense = 0;
+      let investment = 0;
+      let goalFeed = 0;
+      let sponsored = 0;
+
+      filteredTransactions.forEach(t => {
+          const currency = getAccountCurrency(t.accountId);
+          if (t.type === 'EXPENSE') {
+              const net = Math.max(0, t.amount - (t.sponsoredAmount || 0));
+              const netVal = db.convertAmount(net, currency, settings.currency);
+              const sponsorVal = db.convertAmount(t.sponsoredAmount || 0, currency, settings.currency);
+              expense += netVal;
+              sponsored += sponsorVal;
+          } else if (t.type === 'INCOME') {
+              income += db.convertAmount(t.amount, currency, settings.currency);
+          } else if (t.type === 'INVESTMENT') {
+              investment += db.convertAmount(t.amount, currency, settings.currency);
+          } else if (t.type === 'GOAL') {
+              goalFeed += db.convertAmount(t.amount, currency, settings.currency);
+          }
+      });
+
+      return { income, expense, investment, goalFeed, sponsored };
+  }, [filteredTransactions, settings.currency, accounts]);
+
+  const radarFusionData = useMemo(() => {
+      const incomeBase = Math.max(1, radarKpis.income);
+      const unspent = Math.max(0, incomeBase - radarKpis.expense - radarKpis.investment - radarKpis.goalFeed);
+      const items = [
+          { metric: 'Spending', actual: (radarKpis.expense / incomeBase) * 100, absolute: radarKpis.expense },
+          { metric: 'Investing', actual: (radarKpis.investment / incomeBase) * 100, absolute: radarKpis.investment },
+          { metric: 'Goals', actual: (radarKpis.goalFeed / incomeBase) * 100, absolute: radarKpis.goalFeed },
+          { metric: 'Sponsored', actual: (radarKpis.sponsored / incomeBase) * 100, absolute: radarKpis.sponsored },
+          { metric: 'Unspent', actual: (unspent / incomeBase) * 100, absolute: unspent }
+      ];
+
+      const maxAbs = Math.max(1, ...items.map(item => item.absolute));
+      return items.map(item => ({
+          metric: item.metric,
+          actual: item.actual,
+          target: radarTargetData.find(t => t.metric === item.metric)?.value || 0,
+          index: (item.absolute / maxAbs) * 100
+      }));
+  }, [radarKpis, radarTargetData]);
+
+  const radarKeyLabels: Record<string, string> = {
+      actual: 'Actual Share',
+      target: 'Target Share',
+      index: 'Relative Size'
+  };
+
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -369,28 +485,53 @@ export const Reports: React.FC = () => {
                    >
                        <Flame size={12} /> Burndown
                    </button>
+                    <button 
+                        onClick={() => setSpendingMode('SCATTER')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${spendingMode === 'SCATTER' ? 'bg-sky-500/20 text-sky-300 shadow-sm border border-sky-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                       Scatter
+                    </button>
               </div>
           </div>
 
-          <div className="h-[250px] w-full">
-              {dailyData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                    {spendingMode === 'ACTIVITY' ? (
+                    <div className="h-[250px] w-full">
+                                {(spendingMode === 'SCATTER' ? pulseScatterPointCount > 0 : dailyData.length > 0) ? (
+                                spendingMode === 'SCATTER' ? (
+                                    pulseScatterPointCount > 0 ? (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                                <ScatterChart>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                            <XAxis type="number" dataKey="day" name="Day of Month" tick={{ fill: '#94a3b8', fontSize: 10 }} domain={[0, 31]} ticks={[0, 5, 10, 15, 20, 25, 31]} padding={{ left: 6, right: 10 }} />
+                                                        <YAxis type="number" dataKey="amount" name="Amount" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                                                        <Tooltip
+                                                            cursor={{ strokeDasharray: '3 3' }}
+                                                            contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
+                                                            formatter={(val: any) => [formatMoney(Number(val)), 'Expense']}
+                                                        />
+                                                    <Scatter data={pulseScatterData} fill="#38bdf8" />
+                                                </ScatterChart>
+                                        </ResponsiveContainer>
+                                    ) : (
+                                        <div className="h-full flex items-center justify-center text-slate-600 italic font-medium">No expenses in range</div>
+                                    )
+                                ) : (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        {spendingMode === 'ACTIVITY' ? (
                         <BarChart data={dailyData} barGap={0}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10}} interval={2} />
+                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10}} interval={2} padding={{ left: 6, right: 10 }} />
                             <Tooltip 
                                 cursor={{fill: '#1e293b', opacity: 0.4}} 
                                 contentStyle={{backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff'}} 
                                 labelFormatter={(label) => `Day ${label}`}
                             />
-                            <Bar dataKey="income" name="Income" fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={10} />
-                            <Bar dataKey="expense" name="Expense" fill="#f43f5e" radius={[2, 2, 0, 0]} maxBarSize={10} />
+                            <Bar dataKey="income" name="Income" fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={10} minPointSize={2} />
+                            <Bar dataKey="expense" name="Expense" fill="#f43f5e" radius={[2, 2, 0, 0]} maxBarSize={10} minPointSize={2} />
                         </BarChart>
                     ) : (
                         <BarChart data={dailyData} barGap={0}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10}} interval={2} />
+                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10}} interval={2} padding={{ left: 6, right: 10 }} />
                              <YAxis 
                                 axisLine={false} 
                                 tickLine={false} 
@@ -404,92 +545,42 @@ export const Reports: React.FC = () => {
                                 labelFormatter={(label) => `Day ${label}`}
                                 formatter={(val: any) => [typeof val === 'number' ? val.toFixed(1) + '%' : 'Future', 'Remaining']}
                             />
-                            <Bar dataKey="remainingPct" name="Remaining Budget" fill="#6366f1" radius={[2, 2, 0, 0]} maxBarSize={12} />
+                            <Bar dataKey="remainingPct" name="Remaining Budget" fill="#6366f1" radius={[2, 2, 0, 0]} maxBarSize={12} minPointSize={2} />
                         </BarChart>
                     )}
-                </ResponsiveContainer>
+                  </ResponsiveContainer>
+                )
               ) : (
                 <div className="h-full flex items-center justify-center text-slate-600 italic font-medium">Gathering transactional history...</div>
               )}
           </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slide-up" style={{animationDelay: '500ms'}}>
-          <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-              <h3 className="text-white font-semibold mb-6">Capital Allocation</h3>
-              <div className="flex flex-col md:flex-row items-center">
-                  <div className="h-[250px] w-full md:w-1/2">
-                    {allocationData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={allocationData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                    stroke="none"
-                                >
-                                    {allocationData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip contentStyle={{backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff'}} itemStyle={{color: '#fff'}} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <div className="h-full flex items-center justify-center text-slate-600">No data</div>
-                    )}
-                  </div>
-                  <div className="w-full md:w-1/2 space-y-4 md:pl-4 mt-4 md:mt-0">
-                      <div>
-                          <p className="text-slate-400 text-xs uppercase font-bold">Needs</p>
-                          <p className="text-xl font-bold text-white">{formatMoney(stats.needs)}</p>
-                          <div className="h-1.5 w-full bg-slate-800 rounded-full mt-1 overflow-hidden">
-                              <div className="h-full bg-emerald-500 rounded-full transition-all duration-1000" style={{ width: (stats.expense + stats.investment) > 0 ? `${(stats.needs / (stats.expense + stats.investment)) * 100}%` : '0%' }}></div>
-                          </div>
-                      </div>
-                      <div>
-                          <p className="text-slate-400 text-xs uppercase font-bold">Wants</p>
-                          <p className="text-xl font-bold text-white">{formatMoney(stats.wants)}</p>
-                          <div className="h-1.5 w-full bg-slate-800 rounded-full mt-1 overflow-hidden">
-                              <div className="h-full bg-amber-500 rounded-full transition-all duration-1000" style={{ width: (stats.expense + stats.investment) > 0 ? `${(stats.wants / (stats.expense + stats.investment)) * 100}%` : '0%' }}></div>
-                          </div>
-                      </div>
-                      <div>
-                          <p className="text-slate-400 text-xs uppercase font-bold">Investments</p>
-                          <p className="text-xl font-bold text-white">{formatMoney(stats.investment)}</p>
-                          <div className="h-1.5 w-full bg-slate-800 rounded-full mt-1 overflow-hidden">
-                              <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: (stats.expense + stats.investment) > 0 ? `${(stats.investment / (stats.expense + stats.investment)) * 100}%` : '0%' }}></div>
-                          </div>
-                      </div>
-                  </div>
-              </div>
-          </div>
-
-          <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-              <h3 className="text-white font-semibold mb-6 flex items-center gap-2">
-                  <Activity size={18} className="text-rose-400" /> Lifestyle Burn & Invest
+      <div className="bg-[#0f172a] p-4 rounded-2xl border border-slate-800 animate-slide-up" style={{animationDelay: '450ms'}}>
+          <div className="flex justify-between items-center mb-4">
+              <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                  <BarChart3 size={16} className="text-cyan-400" /> Income Allocation
               </h3>
-              <div className="h-[250px] w-full">
-                  {burnRateData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={burnRateData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                            <YAxis hide />
-                            <Tooltip cursor={{fill: '#1e293b', opacity: 0.4}} contentStyle={{backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff'}} />
-                            <Legend />
-                            <Bar dataKey="needs" name="Needs" stackId="a" fill="#10b981" />
-                            <Bar dataKey="wants" name="Wants" stackId="a" fill="#f59e0b" />
-                            <Bar dataKey="investment" name="Invest" stackId="a" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-slate-600">No trend data available</div>
-                  )}
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-2 py-1 rounded-full border border-slate-800 shadow-inner">
+                  {reportRangeLabel}
+              </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div>
+                  <div className="flex justify-between text-slate-400 mb-1"><span>Spending</span><span>{radarKpis.income > 0 ? ((radarKpis.expense / radarKpis.income) * 100).toFixed(0) : 0}%</span></div>
+                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-rose-500" style={{ width: `${Math.min(100, radarKpis.income > 0 ? (radarKpis.expense / radarKpis.income) * 100 : 0)}%` }}></div></div>
+              </div>
+              <div>
+                  <div className="flex justify-between text-slate-400 mb-1"><span>Investing</span><span>{radarKpis.income > 0 ? ((radarKpis.investment / radarKpis.income) * 100).toFixed(0) : 0}%</span></div>
+                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${Math.min(100, radarKpis.income > 0 ? (radarKpis.investment / radarKpis.income) * 100 : 0)}%` }}></div></div>
+              </div>
+              <div>
+                  <div className="flex justify-between text-slate-400 mb-1"><span>Goals</span><span>{radarKpis.income > 0 ? ((radarKpis.goalFeed / radarKpis.income) * 100).toFixed(0) : 0}%</span></div>
+                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-amber-500" style={{ width: `${Math.min(100, radarKpis.income > 0 ? (radarKpis.goalFeed / radarKpis.income) * 100 : 0)}%` }}></div></div>
+              </div>
+              <div>
+                  <div className="flex justify-between text-slate-400 mb-1"><span>Unspent</span><span>{radarKpis.income > 0 ? (Math.max(0, ((radarKpis.income - radarKpis.expense - radarKpis.investment - radarKpis.goalFeed) / radarKpis.income) * 100)).toFixed(0) : 0}%</span></div>
+                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-cyan-400" style={{ width: `${Math.min(100, radarKpis.income > 0 ? Math.max(0, ((radarKpis.income - radarKpis.expense - radarKpis.investment - radarKpis.goalFeed) / radarKpis.income) * 100) : 0)}%` }}></div></div>
               </div>
           </div>
       </div>

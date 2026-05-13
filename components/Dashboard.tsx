@@ -2,8 +2,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db, subscribe, getEnv } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
-import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Layers, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2 } from 'lucide-react';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ScatterChart, Scatter } from 'recharts';
+import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2, PieChart as PieIcon } from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, LineChart as RechartsLineChart, Line } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 
 const CustomTooltip = ({ active, payload, label, currencySymbol }: any) => {
@@ -36,7 +36,7 @@ export const Dashboard: React.FC = () => {
   
     type DashboardRangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
     const dashboardRangeOptions: DashboardRangeKey[] = ['1M', '3M', '6M', '1Y', 'ALL'];
-    const [dashboardRange, setDashboardRange] = useState<DashboardRangeKey>('1M');
+    const [dashboardRange, setDashboardRange] = useState<DashboardRangeKey>(() => db.getSettings().dashboardRange || '1M');
     const historyRange = useMemo(() => {
         if (dashboardRange === 'ALL') return 'ALL';
         if (dashboardRange === '1M') return 1;
@@ -52,6 +52,7 @@ export const Dashboard: React.FC = () => {
   // AI State
   const [aiInsights, setAiInsights] = useState<AiInsight[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
+    const [cashFlowMode, setCashFlowMode] = useState<'FLOW' | 'SAVINGS'>('FLOW');
 
   const loadData = () => {
     setHealth(db.getFinancialHealth());
@@ -192,6 +193,10 @@ export const Dashboard: React.FC = () => {
     return () => unsubscribe();
   }, [historyRange]);
 
+    useEffect(() => {
+            db.updateSettings({ dashboardRange });
+    }, [dashboardRange]);
+
   useEffect(() => {
     if (transactions.length >= 3 && aiInsights.length === 0 && !isAiLoading) {
       generateAiInsights();
@@ -297,30 +302,6 @@ export const Dashboard: React.FC = () => {
       };
     }, [transactions, categories, accounts, settings, health.liquidAssets, health.freeLiquidAssets]);
 
-  const rule503020 = useMemo(() => {
-      const { income, expense, invested } = currentMonthStats;
-      if (income === 0) return null;
-      let needs = 0, wants = 0;
-      transactions.forEach(t => {
-        // ... (calculation logic same as before)
-        const parts = t.date.split(/[^0-9]/);
-        if(parts.length >= 2) {
-             const txKey = `${parseInt(parts[0])}-${String(parseInt(parts[1])).padStart(2,'0')}`;
-             const now = new Date();
-             const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
-             if (txKey === currentKey && t.type === 'EXPENSE') {
-                 const cat = categories.find(c => c.id === t.categoryId);
-                 const acc = accounts.find(a => a.id === t.accountId);
-                                 const rawAmount = Math.max(0, t.amount - (t.sponsoredAmount || 0));
-                                 const val = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
-                 if (cat?.necessity === 'NEED') needs += val;
-                 else wants += val;
-             }
-        }
-      });
-      return { needsPct: (needs / income) * 100, wantsPct: (wants / income) * 100, savingsPct: (invested / income) * 100, needsAmt: needs, wantsAmt: wants };
-  }, [currentMonthStats, transactions, categories, accounts, settings.currency]);
-
   const formatDateKey = (date: Date) => {
       const y = date.getFullYear();
       const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -384,69 +365,84 @@ export const Dashboard: React.FC = () => {
       return { income, expense, investment, goalFeed, sponsored };
   }, [dashboardRangeTxs, settings.currency, accounts]);
 
-  const dashboardRadarTargetData = useMemo(
-      () => [
-          { metric: 'Expense', value: 50 },
-          { metric: 'Invest', value: 20 },
-          { metric: 'Goals', value: 10 },
-          { metric: 'Sponsored', value: 0 },
-          { metric: 'Residual', value: 20 }
-      ],
-      []
-  );
-
-  const dashboardRadarFusionData = useMemo(() => {
-      const incomeBase = Math.max(1, dashboardRangeKpis.income);
-      const residual = Math.max(0, incomeBase - dashboardRangeKpis.expense - dashboardRangeKpis.investment - dashboardRangeKpis.goalFeed);
-      const items = [
-          { metric: 'Expense', actual: (dashboardRangeKpis.expense / incomeBase) * 100, absolute: dashboardRangeKpis.expense },
-          { metric: 'Invest', actual: (dashboardRangeKpis.investment / incomeBase) * 100, absolute: dashboardRangeKpis.investment },
-          { metric: 'Goals', actual: (dashboardRangeKpis.goalFeed / incomeBase) * 100, absolute: dashboardRangeKpis.goalFeed },
-          { metric: 'Sponsored', actual: (dashboardRangeKpis.sponsored / incomeBase) * 100, absolute: dashboardRangeKpis.sponsored },
-          { metric: 'Residual', actual: (residual / incomeBase) * 100, absolute: residual }
-      ];
-
-      const maxAbs = Math.max(1, ...items.map(item => item.absolute));
-      return items.map(item => ({
-          metric: item.metric,
-          actual: item.actual,
-          target: dashboardRadarTargetData.find(t => t.metric === item.metric)?.value || 0,
-          index: (item.absolute / maxAbs) * 100
-      }));
-  }, [dashboardRangeKpis, dashboardRadarTargetData]);
-
-  const dashboardScatterData = useMemo(() => {
-      const data: Array<{ day: number; amount: number; label: string }> = [];
-      const start = new Date(dashboardRangeInfo.startKey);
+  const dashboardAllocationStats = useMemo(() => {
+      let needs = 0;
+      let wants = 0;
+      let investment = 0;
+      let expense = 0;
 
       dashboardRangeTxs.forEach(t => {
-          if (t.type !== 'EXPENSE') return;
-          const d = new Date(t.date);
-          const dayOffset = Math.floor((d.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-          if (dayOffset < 1 || dayOffset > dashboardRangeInfo.rangeDays) return;
+          if (t.type !== 'EXPENSE' && t.type !== 'INVESTMENT') return;
+          const acc = accounts.find(a => a.id === t.accountId);
+          const rawAmount = t.type === 'EXPENSE'
+              ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+              : t.amount;
+          const amount = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
 
-          const currency = getAccountCurrency(t.accountId);
-          const net = Math.max(0, t.amount - (t.sponsoredAmount || 0));
-          const amount = db.convertAmount(net, currency, settings.currency);
-          data.push({ day: dayOffset, amount, label: t.description || 'Expense' });
+          if (t.type === 'INVESTMENT') {
+              investment += amount;
+              return;
+          }
+
+          expense += amount;
+          const cat = categories.find(c => c.id === t.categoryId);
+          if (cat?.necessity === 'NEED') needs += amount;
+          else wants += amount;
       });
 
-      return data;
-  }, [dashboardRangeTxs, dashboardRangeInfo.startKey, dashboardRangeInfo.rangeDays, settings.currency, accounts]);
+      return { needs, wants, investment, expense };
+  }, [dashboardRangeTxs, categories, accounts, settings.currency]);
 
-  const radarMetricLabels: Record<string, string> = {
-      Expense: 'Out-of-Pocket',
-      Invest: 'Invested',
-      Goals: 'Goal Feeds',
-      Sponsored: 'Sponsored',
-      Residual: 'Residual'
-  };
+  const dashboardAllocationData = useMemo(() => [
+      { name: 'Needs', value: dashboardAllocationStats.needs, color: '#10b981' },
+      { name: 'Wants', value: dashboardAllocationStats.wants, color: '#f59e0b' },
+      { name: 'Investments', value: dashboardAllocationStats.investment, color: '#8b5cf6' }
+  ].filter(item => item.value > 0), [dashboardAllocationStats]);
 
-  const radarKeyLabels: Record<string, string> = {
-      actual: 'Actual Share',
-      target: 'Target Share',
-      index: 'Absolute Index'
-  };
+  const cashFlowData = useMemo(() => {
+      if (history.length === 0) return [];
+
+      const entries = history.map(entry => ({
+          date: entry.date,
+          formattedDate: entry.formattedDate,
+          income: 0,
+          needs: 0,
+          wants: 0,
+          investment: 0,
+          savings: 0
+      }));
+      const byMonth = new Map(entries.map(entry => [entry.date, entry]));
+
+      transactions.forEach(t => {
+          const key = t.date.substring(0, 7);
+          const entry = byMonth.get(key);
+          if (!entry) return;
+          if (t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out') return;
+
+          const acc = accounts.find(a => a.id === t.accountId);
+          const rawAmount = t.type === 'EXPENSE'
+              ? Math.max(0, t.amount - (t.sponsoredAmount || 0))
+              : t.amount;
+          const amount = db.convertAmount(rawAmount, acc?.currency || settings.currency, settings.currency);
+
+          if (t.type === 'INCOME') {
+              entry.income += amount;
+          } else if (t.type === 'INVESTMENT') {
+              entry.investment += amount;
+          } else if (t.type === 'EXPENSE') {
+              const cat = categories.find(c => c.id === t.categoryId);
+              if (cat?.necessity === 'NEED') entry.needs += amount;
+              else entry.wants += amount;
+          }
+      });
+
+      entries.forEach(entry => {
+          const outflow = entry.needs + entry.wants + entry.investment;
+          entry.savings = Math.max(0, entry.income - outflow);
+      });
+
+      return entries;
+  }, [history, transactions, accounts, categories, settings.currency]);
 
   const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -519,13 +515,13 @@ export const Dashboard: React.FC = () => {
               <div className="flex gap-4 md:gap-8 w-full md:w-auto justify-between md:justify-end bg-[#0f172a]/50 backdrop-blur-xl p-6 rounded-2xl border border-slate-800 shadow-2xl">
                  <div className="text-left md:text-right">
                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1.5">Dividends & Growth</p>
-                     <p className={`text-xl md:text-2xl font-black ${currentMonthStats.invested > 0 ? 'text-purple-400' : 'text-slate-700'}`}>
-                        {formatMoney(currentMonthStats.invested)}
+                      <p className={`text-xl md:text-2xl font-black ${dashboardRangeKpis.investment > 0 ? 'text-purple-400' : 'text-slate-700'}`}>
+                        {formatMoney(dashboardRangeKpis.investment)}
                      </p>
                  </div>
                  <div className="text-right">
                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1.5">Monthly Income</p>
-                     <p className="text-xl md:text-2xl font-black text-emerald-400">{formatMoney(currentMonthStats.income)}</p>
+                     <p className="text-xl md:text-2xl font-black text-emerald-400">{formatMoney(dashboardRangeKpis.income)}</p>
                  </div>
               </div>
           </div>
@@ -535,7 +531,7 @@ export const Dashboard: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 animate-in fade-in duration-700">
           <div>
               <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Global Range</p>
-              <p className="text-xs text-slate-600">Used for balance radar and outlier scatter</p>
+              <p className="text-xs text-slate-600">Used across dashboard charts</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
               {dashboardRangeOptions.map(key => (
@@ -701,48 +697,69 @@ export const Dashboard: React.FC = () => {
                 `}</style>
             </div>
 
-            {/* Card 2: 50/30/20 Rule */}
+            {/* Card 2: Capital Allocation */}
             <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-2xl border border-slate-800 flex flex-col justify-between hover:border-slate-700 hover:shadow-xl transition-all duration-300 group animate-slide-up" style={{animationDelay: '200ms'}}>
-                <div className="flex justify-between items-center mb-6">
-                    <h4 className="font-bold text-slate-200 group-hover:text-blue-400 transition-colors">Burn Allocation</h4>
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-inner">Monthly Flow</span>
+                <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-bold text-slate-200 group-hover:text-purple-400 transition-colors">Capital Allocation</h4>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-inner">{dashboardRangeInfo.label}</span>
                 </div>
 
-                {rule503020 ? (
-                    <div className="space-y-4">
+                <div className="flex flex-col gap-4">
+                    <div className="h-[150px] w-full">
+                        {dashboardAllocationData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={dashboardAllocationData}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={45}
+                                        outerRadius={65}
+                                        paddingAngle={4}
+                                        dataKey="value"
+                                        stroke="none"
+                                    >
+                                        {dashboardAllocationData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <RechartsTooltip contentStyle={{backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff'}} itemStyle={{color: '#fff'}} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-slate-700 text-xs font-bold italic">No data</div>
+                        )}
+                    </div>
+                    <div className="space-y-3">
                         <div>
-                            <div className="flex justify-between text-xs font-bold mb-1.5">
-                                <span className="text-slate-500 uppercase text-[10px]">Needs (50%)</span>
-                                <span className={rule503020.needsPct > 55 ? 'text-rose-400' : 'text-emerald-400'}>{rule503020.needsPct.toFixed(0)}%</span>
+                            <div className="flex justify-between text-xs font-bold mb-1">
+                                <span className="text-slate-500 uppercase text-[10px]">Needs</span>
+                                <span className="text-emerald-400">{formatMoney(dashboardAllocationStats.needs)}</span>
                             </div>
                             <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                                <div className={`h-full rounded-full transition-all duration-1000 ease-out ${rule503020.needsPct > 55 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{width: `${Math.min(100, rule503020.needsPct)}%`}} />
+                                <div className="h-full bg-emerald-500 rounded-full transition-all duration-1000" style={{ width: (dashboardAllocationStats.expense + dashboardAllocationStats.investment) > 0 ? `${(dashboardAllocationStats.needs / (dashboardAllocationStats.expense + dashboardAllocationStats.investment)) * 100}%` : '0%' }}></div>
                             </div>
                         </div>
                         <div>
-                            <div className="flex justify-between text-xs font-bold mb-1.5">
-                                <span className="text-slate-500 uppercase text-[10px]">Wants (30%)</span>
-                                <span className={rule503020.wantsPct > 35 ? 'text-rose-400' : 'text-amber-400'}>{rule503020.wantsPct.toFixed(0)}%</span>
+                            <div className="flex justify-between text-xs font-bold mb-1">
+                                <span className="text-slate-500 uppercase text-[10px]">Wants</span>
+                                <span className="text-amber-400">{formatMoney(dashboardAllocationStats.wants)}</span>
                             </div>
                             <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                                <div className={`h-full rounded-full transition-all duration-1000 ease-out ${rule503020.wantsPct > 35 ? 'bg-rose-500' : 'bg-amber-500'}`} style={{width: `${Math.min(100, rule503020.wantsPct)}%`}} />
+                                <div className="h-full bg-amber-500 rounded-full transition-all duration-1000" style={{ width: (dashboardAllocationStats.expense + dashboardAllocationStats.investment) > 0 ? `${(dashboardAllocationStats.wants / (dashboardAllocationStats.expense + dashboardAllocationStats.investment)) * 100}%` : '0%' }}></div>
                             </div>
                         </div>
                         <div>
-                            <div className="flex justify-between text-xs font-bold mb-1.5">
-                                <span className="text-slate-500 uppercase text-[10px]">Invest ({(settings.savingsGoalPercent || 20)}%)</span>
-                                <span className={rule503020.savingsPct < (settings.savingsGoalPercent || 20) ? 'text-rose-400' : 'text-purple-400'}>{rule503020.savingsPct.toFixed(0)}%</span>
+                            <div className="flex justify-between text-xs font-bold mb-1">
+                                <span className="text-slate-500 uppercase text-[10px]">Invest</span>
+                                <span className="text-purple-400">{formatMoney(dashboardAllocationStats.investment)}</span>
                             </div>
                             <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                                <div className={`h-full rounded-full transition-all duration-1000 ease-out ${rule503020.savingsPct < (settings.savingsGoalPercent || 20) ? 'bg-rose-500' : 'bg-purple-500'}`} style={{width: `${Math.min(100, rule503020.savingsPct)}%`}} />
+                                <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: (dashboardAllocationStats.expense + dashboardAllocationStats.investment) > 0 ? `${(dashboardAllocationStats.investment / (dashboardAllocationStats.expense + dashboardAllocationStats.investment)) * 100}%` : '0%' }}></div>
                             </div>
                         </div>
                     </div>
-                ) : (
-                    <div className="flex-1 flex items-center justify-center text-slate-700 text-xs font-bold italic">
-                        Input income to unlock breakdown
-                    </div>
-                )}
+                </div>
             </div>
 
              {/* Card 3: Wealth Velocity */}
@@ -757,7 +774,7 @@ export const Dashboard: React.FC = () => {
 
                  <div className="relative z-10 mb-8">
                      <h3 className="text-4xl font-black text-white mb-1">
-                         {currentMonthStats.income > 0 ? ((currentMonthStats.invested / currentMonthStats.income) * 100).toFixed(1) : 0}%
+                         {dashboardRangeKpis.income > 0 ? ((dashboardRangeKpis.investment / dashboardRangeKpis.income) * 100).toFixed(1) : 0}%
                      </h3>
                      <p className="text-[10px] font-black uppercase text-slate-600 tracking-widest">Efficiency Multiplier</p>
                  </div>
@@ -769,7 +786,7 @@ export const Dashboard: React.FC = () => {
                      </div>
                      <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800 shadow-inner">
                          <p className="text-[9px] uppercase text-slate-500 font-black mb-1">Mo Actual</p>
-                         <p className="text-sm font-black text-purple-400">{formatMoney(currentMonthStats.invested)}</p>
+                         <p className="text-sm font-black text-purple-400">{formatMoney(dashboardRangeKpis.investment)}</p>
                      </div>
                  </div>
                  
@@ -785,24 +802,58 @@ export const Dashboard: React.FC = () => {
                 <h3 className="text-white font-black uppercase text-xs tracking-widest flex items-center gap-2">
                     <Activity size={18} className="text-emerald-400" /> Cash Flow Momentum
                 </h3>
-                <div className="flex gap-4 text-[9px] font-black uppercase tracking-tighter">
-                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div> Income</div>
-                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]"></div> Burn</div>
-                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-purple-500 shadow-[0_0_8px_rgba(139,92,246,0.4)]"></div> Growth</div>
+                <div className="flex items-center gap-4">
+                    <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800 text-[10px] font-black uppercase tracking-widest">
+                        <button
+                            onClick={() => setCashFlowMode('FLOW')}
+                            className={`px-3 py-1.5 rounded-md transition-all ${cashFlowMode === 'FLOW' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            Flow
+                        </button>
+                        <button
+                            onClick={() => setCashFlowMode('SAVINGS')}
+                            className={`px-3 py-1.5 rounded-md transition-all ${cashFlowMode === 'SAVINGS' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            Savings
+                        </button>
+                    </div>
+                    {cashFlowMode === 'FLOW' ? (
+                        <div className="flex flex-wrap gap-4 text-[9px] font-black uppercase tracking-tighter">
+                            <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div> Income</div>
+                            <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]"></div> Needs</div>
+                            <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"></div> Wants</div>
+                            <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-purple-500 shadow-[0_0_8px_rgba(139,92,246,0.4)]"></div> Invest</div>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-tighter">
+                            <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.4)]"></div> Savings
+                        </div>
+                    )}
                 </div>
               </div>
               <div className="h-[280px] w-full">
-                  {history.length > 0 ? (
+                                    {cashFlowData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={history} barGap={6}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                            <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} />
-                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
-                            <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{fill: '#1e293b', opacity: 0.2}} />
-                            <Bar dataKey="income" name="Income" fill="#10b981" radius={[4, 4, 0, 0]} animationDuration={1000} />
-                            <Bar dataKey="expense" name="Expense" stackId="out" fill="#f43f5e" animationDuration={1200} />
-                            <Bar dataKey="investment" name="Investment" stackId="out" fill="#8b5cf6" radius={[4, 4, 0, 0]} animationDuration={1400} />
-                        </BarChart>
+                        {cashFlowMode === 'FLOW' ? (
+                            <BarChart data={cashFlowData} barGap={6} barCategoryGap={12}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                                <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
+                                <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{fill: '#1e293b', opacity: 0.2}} />
+                                <Bar dataKey="income" name="Income" fill="#10b981" radius={[4, 4, 0, 0]} minPointSize={3} animationDuration={1000} />
+                                <Bar dataKey="needs" name="Needs" stackId="out" fill="#38bdf8" minPointSize={3} animationDuration={1200} />
+                                <Bar dataKey="wants" name="Wants" stackId="out" fill="#f59e0b" minPointSize={3} animationDuration={1300} />
+                                <Bar dataKey="investment" name="Investment" stackId="out" fill="#8b5cf6" radius={[4, 4, 0, 0]} minPointSize={3} animationDuration={1400} />
+                            </BarChart>
+                        ) : (
+                            <RechartsLineChart data={cashFlowData} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                                <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
+                                <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} />
+                                <Line type="monotone" dataKey="savings" name="Savings" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3, fill: '#22d3ee' }} activeDot={{ r: 5 }} />
+                            </RechartsLineChart>
+                        )}
                     </ResponsiveContainer>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-slate-700 gap-2">
@@ -841,108 +892,16 @@ export const Dashboard: React.FC = () => {
                                 </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} horizontal={false} />
-                            <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 700}} interval="preserveStartEnd" minTickGap={20} />
+                            <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 700}} interval="preserveStartEnd" minTickGap={20} padding={{ left: 8, right: 14 }} />
                             <YAxis hide domain={['auto', 'auto']} />
                             <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{stroke: '#3b82f6', strokeWidth: 1.5}} />
-                            <Area type="monotone" dataKey="endNetWorth" name="Net Worth" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorNw)" animationDuration={2000} />
+                            <Area type="monotone" dataKey="endNetWorth" name="Net Worth" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorNw)" animationDuration={2000} dot={{ r: 2 }} />
                         </AreaChart>
                     </ResponsiveContainer>
                  ) : (
                     <div className="h-full flex items-center justify-center text-slate-800 text-xs font-black italic">Awaiting data points</div>
                  )}
               </div>
-          </div>
-      </div>
-
-      {/* 3.5 BALANCE RADAR + OUTLIER SCATTER */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in slide-in-from-bottom-8 fade-in duration-700 delay-250">
-          <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 shadow-xl">
-              <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-white font-black uppercase text-xs tracking-widest flex items-center gap-2">
-                      <Layers size={18} className="text-cyan-400" /> Balance Radar Fusion
-                  </h3>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-inner">
-                      {dashboardRangeInfo.label}
-                  </span>
-              </div>
-              <div className="h-[260px] w-full">
-                  {dashboardRangeTxs.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                          <RadarChart data={dashboardRadarFusionData}>
-                              <defs>
-                                  <linearGradient id="dashboardRadarActual" x1="0" y1="0" x2="1" y2="1">
-                                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.45} />
-                                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.05} />
-                                  </linearGradient>
-                              </defs>
-                              <PolarGrid stroke="#1e293b" radialLines={false} />
-                              <PolarAngleAxis
-                                  dataKey="metric"
-                                  tickFormatter={(value) => radarMetricLabels[String(value)] || String(value)}
-                                  tick={{ fill: '#cbd5f5', fontSize: 10, fontWeight: 600 }}
-                                  tickLine={false}
-                                  axisLine={false}
-                                  tickMargin={12}
-                              />
-                              <PolarRadiusAxis
-                                  tick={{ fill: '#64748b', fontSize: 10 }}
-                                  tickLine={false}
-                                  axisLine={false}
-                                  domain={[0, 100]}
-                                  tickFormatter={(value) => `${value}%`}
-                              />
-                              <RechartsTooltip
-                                  contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
-                                  formatter={(val: any, name: string) => {
-                                      const numeric = Number(val);
-                                      const label = radarKeyLabels[name] || name;
-                                      if (name === 'index') return [numeric.toFixed(0), label];
-                                      return [`${numeric.toFixed(1)}%`, label];
-                                  }}
-                              />
-                              <Radar dataKey="index" stroke="#22d3ee" fill="#22d3ee" fillOpacity={0.08} strokeWidth={1} dot={false} />
-                              <Radar dataKey="target" stroke="#38bdf8" fill="#38bdf8" fillOpacity={0.08} strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
-                              <Radar dataKey="actual" stroke="#f59e0b" fill="url(#dashboardRadarActual)" strokeWidth={2} dot={false} />
-                              <Legend iconSize={8} formatter={(value) => radarKeyLabels[String(value)] || String(value)} />
-                          </RadarChart>
-                      </ResponsiveContainer>
-                  ) : (
-                      <div className="h-full flex items-center justify-center text-slate-700 text-xs font-bold italic">No recent activity</div>
-                  )}
-              </div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-4">Actual vs target share with absolute index overlay</p>
-          </div>
-
-          <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 shadow-xl">
-              <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-white font-black uppercase text-xs tracking-widest flex items-center gap-2">
-                      <Activity size={18} className="text-blue-400" /> Expense Outlier Scatter
-                  </h3>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-inner">
-                      {dashboardRangeInfo.label}
-                  </span>
-              </div>
-              <div className="h-[260px] w-full">
-                  {dashboardScatterData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                          <ScatterChart>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                              <XAxis type="number" dataKey="day" name="Day" tick={{ fill: '#94a3b8', fontSize: 10 }} domain={[1, dashboardRangeInfo.rangeDays]} />
-                              <YAxis type="number" dataKey="amount" name="Amount" tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                              <RechartsTooltip
-                                  cursor={{ strokeDasharray: '3 3' }}
-                                  contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
-                                  formatter={(val: any) => [formatMoney(Number(val)), 'Expense']}
-                                  labelFormatter={(label) => `Day ${label}`}
-                              />
-                              <Scatter data={dashboardScatterData} fill="#38bdf8" />
-                          </ScatterChart>
-                      </ResponsiveContainer>
-                  ) : (
-                      <div className="h-full flex items-center justify-center text-slate-700 text-xs font-bold italic">No expenses in range</div>
-                  )}
-              </div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-4">Spot high-spend spikes by day</p>
           </div>
       </div>
 
