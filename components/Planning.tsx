@@ -849,6 +849,8 @@ export const Planning: React.FC = () => {
       }, 0);
       const goalFeedTxs = transactions.filter(t => t.date >= startOfPeriod && t.date <= endOfPeriod && t.type === 'GOAL');
       const goalFeedTotal = goalFeedTxs.reduce((s, t) => s + db.convertAmount(t.amount, accounts.find(a=>a.id===t.accountId)?.currency || settings.currency, settings.currency), 0);
+      const goalTotalCurrent = goals.reduce((sum, g) => sum + (g.currentAmount || 0), 0);
+      const goalTotalTarget = goals.reduce((sum, g) => sum + (g.targetAmount || 0), 0);
 
       const netDeviation = totalAllocated - totalSpent;
       const isPositiveDeviation = netDeviation >= 0;
@@ -942,6 +944,44 @@ export const Planning: React.FC = () => {
                             {isPositiveDeviation ? 'Under Budget' : 'Over Budget'}
                         </p>
                     </div>
+               </div>
+
+               <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden">
+                   <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
+                       <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                           <Target size={16} className="text-amber-400" /> Goal Snapshot
+                       </h3>
+                       {goals.length > 0 && (
+                           <span className="text-xs font-mono text-amber-400">{formatMoney(goalTotalCurrent)} / {formatMoney(goalTotalTarget)}</span>
+                       )}
+                   </div>
+                   <div className="p-6 space-y-4">
+                       {goals.length === 0 ? (
+                           <div className="text-slate-500 text-xs italic text-center py-4">No goals yet. Create one in the Dashboard.</div>
+                       ) : (
+                           goals.map(goal => {
+                               const target = Math.max(1, goal.targetAmount || 0);
+                               const percent = Math.min(100, (goal.currentAmount / target) * 100);
+                               return (
+                                   <div key={goal.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/20">
+                                       <div className="flex items-center justify-between mb-2">
+                                           <div>
+                                               <p className="text-sm font-bold text-slate-200">{goal.name}</p>
+                                               <p className="text-[10px] text-slate-500">Target {formatMoney(goal.targetAmount)}</p>
+                                           </div>
+                                           <div className="text-right">
+                                               <p className="text-xs font-mono text-slate-300">{formatMoney(goal.currentAmount)}</p>
+                                               <p className="text-[10px] text-slate-500">{percent.toFixed(0)}%</p>
+                                           </div>
+                                       </div>
+                                       <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
+                                           <div className="h-full rounded-full transition-all duration-700" style={{width: `${percent}%`, backgroundColor: goal.color || '#f59e0b'}}></div>
+                                       </div>
+                                   </div>
+                               );
+                           })
+                       )}
+                   </div>
                </div>
 
                {goalFeedTxs.length > 0 && (

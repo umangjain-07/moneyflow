@@ -24,6 +24,7 @@ const TransactionItem: React.FC<{
     ? db.convertAmount(sponsoredAmount, account?.currency || settings.currency, settings.currency)
     : 0;
     const displaySymbol = settings.currencySymbol;
+    const isGoalSpend = tx.goalContribution !== undefined && tx.goalContribution < 0;
 
     const getIcon = () => {
       if (tx.type === 'GOAL') return <Target size={16} />;
@@ -69,6 +70,9 @@ const TransactionItem: React.FC<{
                           {displaySponsored > 0 && (
                             <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Sponsored {displaySymbol}{displaySponsored.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           )}
+                          {isGoalSpend && (
+                            <span className="text-[9px] bg-amber-500/10 text-amber-400 px-1 rounded-sm">Goal Spend</span>
+                          )}
                       </div>
                   </div>
               </div>
@@ -109,6 +113,11 @@ const TransactionItem: React.FC<{
                 <span>{tx.type === 'GOAL' ? '🎯' : (category?.icon || '🏷️')}</span>
                 {tx.type === 'GOAL' ? 'GOALS' : (category?.name || 'General')}
               </span>
+              {isGoalSpend && (
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  Goal Spend
+                </span>
+              )}
           </td>
           <td className="px-6 py-4 text-slate-400 text-xs">{account?.name || 'Unknown'}</td>
           <td className={`px-6 py-4 text-right font-bold font-mono ${getAmountColor()}`}>
@@ -143,6 +152,7 @@ export const Transactions: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransactionType>('EXPENSE');
+  const [goalFlow, setGoalFlow] = useState<'ADD' | 'SPEND'>('ADD');
 
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -214,6 +224,12 @@ export const Transactions: React.FC = () => {
       }
   }, [mode, categories, editingId]);
 
+  useEffect(() => {
+    if (mode !== 'EXPENSE') {
+      setGoalFlow('ADD');
+    }
+  }, [mode]);
+
     useEffect(() => {
       if (!isModalOpen || editingId || mode !== 'GOAL') return;
       if (!formData.goalId && goals.length > 0) {
@@ -224,6 +240,7 @@ export const Transactions: React.FC = () => {
   const handleOpenAdd = () => {
       setEditingId(null);
       setMode('EXPENSE');
+      setGoalFlow('ADD');
       setFormData({
         amount: '',
         description: '',
@@ -256,6 +273,9 @@ export const Transactions: React.FC = () => {
           tx = relatedTx; 
       }
 
+        const isGoalSpend = !!tx.goalContribution && tx.goalContribution < 0;
+        setGoalFlow(isGoalSpend ? 'SPEND' : 'ADD');
+
       setFormData({
           amount: String(tx.amount),
           description: tx.description,
@@ -266,7 +286,7 @@ export const Transactions: React.FC = () => {
           tags: tx.tags?.join(', ') || '',
           investmentSubtype: tx.investmentSubtype || 'SELF',
           goalId: tx.goalId || '',
-            goalContribution: tx.goalContribution ? String(tx.goalContribution) : '',
+            goalContribution: tx.goalContribution ? String(Math.abs(tx.goalContribution)) : '',
             sponsoredAmount: tx.sponsoredAmount ? String(tx.sponsoredAmount) : ''
       });
       setIsModalOpen(true);
@@ -305,7 +325,14 @@ export const Transactions: React.FC = () => {
       : 0;
 
     let parsedGoalContribution = parseFloat(formData.goalContribution);
-    let hasGoalContribution = !!formData.goalId && !isNaN(parsedGoalContribution) && parsedGoalContribution > 0;
+    let hasGoalContribution = !!formData.goalId && !isNaN(parsedGoalContribution) && parsedGoalContribution !== 0;
+    let goalDelta = 0;
+
+    if (hasGoalContribution) {
+      const magnitude = Math.abs(parsedGoalContribution);
+      const useGoalFunds = mode === 'EXPENSE' && goalFlow === 'SPEND';
+      goalDelta = useGoalFunds ? -magnitude : magnitude;
+    }
 
     if (editingId) {
         const previous = transactions.find(t => t.id === editingId);
@@ -320,7 +347,7 @@ export const Transactions: React.FC = () => {
     } else {
       if (mode === 'GOAL') {
           if (!formData.goalId) return;
-          parsedGoalContribution = amount;
+          goalDelta = amount;
           hasGoalContribution = true;
       }
 
@@ -346,11 +373,11 @@ export const Transactions: React.FC = () => {
         investmentSubtype: mode === 'INVESTMENT' ? formData.investmentSubtype : undefined,
         sponsoredAmount: mode === 'EXPENSE' && sponsoredAmount > 0 ? sponsoredAmount : undefined,
         goalId: hasGoalContribution ? formData.goalId : undefined,
-        goalContribution: hasGoalContribution ? parsedGoalContribution : undefined
+        goalContribution: hasGoalContribution ? goalDelta : undefined
       });
 
       if (hasGoalContribution) {
-        applyGoalDelta(formData.goalId, parsedGoalContribution);
+        applyGoalDelta(formData.goalId, goalDelta);
       }
     }
 
@@ -673,7 +700,23 @@ export const Transactions: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Savings Goal (Optional)</label>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Goal Impact (Optional)</label>
+                        {mode === 'EXPENSE' && (
+                          <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner mb-3">
+                            <button
+                              onClick={() => setGoalFlow('ADD')}
+                              className={`flex-1 px-3 py-2 text-[10px] font-black rounded-xl transition-all ${goalFlow === 'ADD' ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                            >
+                              ADD
+                            </button>
+                            <button
+                              onClick={() => setGoalFlow('SPEND')}
+                              className={`flex-1 px-3 py-2 text-[10px] font-black rounded-xl transition-all ${goalFlow === 'SPEND' ? 'bg-amber-500 text-slate-950 shadow-lg' : 'text-slate-600 hover:text-slate-400'}`}
+                            >
+                              SPEND
+                            </button>
+                          </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
                           <div className="relative">
                             <select
@@ -700,9 +743,16 @@ export const Transactions: React.FC = () => {
                             />
                           </div>
                         </div>
+                        {formData.goalId && (
+                          <p className="text-[9px] text-slate-600 mt-2 ml-1">
+                            {mode === 'EXPENSE' && goalFlow === 'SPEND'
+                              ? 'Reduces the selected goal balance when this expense posts.'
+                              : 'Adds to the selected goal balance alongside this transaction.'}
+                          </p>
+                        )}
                         {goals.length === 0 && (
                           <p className="text-[9px] text-slate-600 mt-2 ml-1">
-                            Create a goal in the Dashboard to link contributions here.
+                            Create a goal in the Dashboard to link it here.
                           </p>
                         )}
                       </div>

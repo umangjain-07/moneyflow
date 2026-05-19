@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db, subscribe, getEnv } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
-import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, LineChart, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2, PieChart as PieIcon } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2, PieChart as PieIcon } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, LineChart as RechartsLineChart, Line } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -52,7 +52,7 @@ export const Dashboard: React.FC = () => {
   // AI State
   const [aiInsights, setAiInsights] = useState<AiInsight[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
-    const [cashFlowMode, setCashFlowMode] = useState<'FLOW' | 'SAVINGS'>('FLOW');
+    const [cashFlowMode, setCashFlowMode] = useState<'FLOW' | 'SAVINGS' | 'NET_WORTH'>('FLOW');
 
   const loadData = () => {
     setHealth(db.getFinancialHealth());
@@ -796,8 +796,8 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* 3. CASH FLOW JOURNAL (BAR CHART) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8 fade-in duration-700 delay-200">
-          <div className="lg:col-span-2 bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 shadow-xl">
+      <div className="grid grid-cols-1 gap-6 animate-in slide-in-from-bottom-8 fade-in duration-700 delay-200">
+          <div className="bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 shadow-xl">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-white font-black uppercase text-xs tracking-widest flex items-center gap-2">
                     <Activity size={18} className="text-emerald-400" /> Cash Flow Momentum
@@ -816,6 +816,12 @@ export const Dashboard: React.FC = () => {
                         >
                             Savings
                         </button>
+                        <button
+                            onClick={() => setCashFlowMode('NET_WORTH')}
+                            className={`px-3 py-1.5 rounded-md transition-all ${cashFlowMode === 'NET_WORTH' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                            Net Worth
+                        </button>
                     </div>
                     {cashFlowMode === 'FLOW' ? (
                         <div className="flex flex-wrap gap-4 text-[9px] font-black uppercase tracking-tighter">
@@ -824,9 +830,13 @@ export const Dashboard: React.FC = () => {
                             <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"></div> Wants</div>
                             <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-purple-500 shadow-[0_0_8px_rgba(139,92,246,0.4)]"></div> Invest</div>
                         </div>
-                    ) : (
+                    ) : cashFlowMode === 'SAVINGS' ? (
                         <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-tighter">
                             <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.4)]"></div> Savings
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-tighter">
+                            <div className="w-2.5 h-2.5 rounded bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.4)]"></div> Net Worth
                         </div>
                     )}
                 </div>
@@ -845,7 +855,7 @@ export const Dashboard: React.FC = () => {
                                 <Bar dataKey="wants" name="Wants" stackId="out" fill="#f59e0b" minPointSize={3} animationDuration={1300} />
                                 <Bar dataKey="investment" name="Investment" stackId="out" fill="#8b5cf6" radius={[4, 4, 0, 0]} minPointSize={3} animationDuration={1400} />
                             </BarChart>
-                        ) : (
+                        ) : cashFlowMode === 'SAVINGS' ? (
                             <RechartsLineChart data={cashFlowData} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                                 <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
@@ -853,6 +863,20 @@ export const Dashboard: React.FC = () => {
                                 <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} />
                                 <Line type="monotone" dataKey="savings" name="Savings" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3, fill: '#22d3ee' }} activeDot={{ r: 5 }} />
                             </RechartsLineChart>
+                        ) : (
+                            <AreaChart data={history} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="cashFlowNetWorth" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
+                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                                <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
+                                <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{stroke: '#3b82f6', strokeWidth: 1.5}} />
+                                <Area type="monotone" dataKey="endNetWorth" name="Net Worth" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#cashFlowNetWorth)" animationDuration={1600} dot={{ r: 2 }} />
+                            </AreaChart>
                         )}
                     </ResponsiveContainer>
                   ) : (
@@ -861,46 +885,6 @@ export const Dashboard: React.FC = () => {
                         <p className="text-sm font-bold italic">Gathering momentum...</p>
                     </div>
                   )}
-              </div>
-          </div>
-          
-          <div className="lg:col-span-1 bg-[#0f172a]/80 backdrop-blur-md p-6 rounded-3xl border border-slate-800 flex flex-col shadow-xl">
-              <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-white font-black uppercase text-xs tracking-widest flex items-center gap-2">
-                      <LineChart size={18} className="text-blue-400" /> NW Trajectory
-                  </h3>
-                                    <select 
-                    className="bg-slate-900 border border-slate-800 text-[10px] font-black uppercase tracking-widest rounded-lg px-3 py-1.5 text-slate-400 outline-none hover:border-slate-700 transition-all cursor-pointer shadow-inner appearance-none"
-                                        value={dashboardRange}
-                                        onChange={(e) => setDashboardRange(e.target.value as DashboardRangeKey)}
-                  >
-                                            <option value="1M">Last 1M</option>
-                                            <option value="3M">Last 3M</option>
-                                            <option value="6M">Last 6M</option>
-                                            <option value="1Y">Last 1Y</option>
-                                            <option value="ALL">Total View</option>
-                  </select>
-              </div>
-              <div className="flex-1 min-h-[220px]">
-                 {history.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={history}>
-                            <defs>
-                                <linearGradient id="colorNw" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                                </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} horizontal={false} />
-                            <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 700}} interval="preserveStartEnd" minTickGap={20} padding={{ left: 8, right: 14 }} />
-                            <YAxis hide domain={['auto', 'auto']} />
-                            <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{stroke: '#3b82f6', strokeWidth: 1.5}} />
-                            <Area type="monotone" dataKey="endNetWorth" name="Net Worth" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorNw)" animationDuration={2000} dot={{ r: 2 }} />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                 ) : (
-                    <div className="h-full flex items-center justify-center text-slate-800 text-xs font-black italic">Awaiting data points</div>
-                 )}
               </div>
           </div>
       </div>
