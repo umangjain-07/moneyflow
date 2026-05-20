@@ -2,7 +2,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, TransactionType, Goal } from '../types';
-import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown, Target } from 'lucide-react';
+import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown, Target, Activity } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ComposedChart,
+  Area,
+  Line,
+  Bar
+} from 'recharts';
 
 // Extracted Component to prevent re-mounting flicker
 const TransactionItem: React.FC<{ 
@@ -148,6 +160,7 @@ export const Transactions: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
+  const [filterMonth, setFilterMonth] = useState<string>('');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -180,6 +193,22 @@ export const Transactions: React.FC = () => {
   };
 
   const getSymbol = (currencyCode: string) => CURRENCY_SYMBOLS[currencyCode] || currencyCode;
+  const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const formatCompact = (val: number) => {
+    const abs = Math.abs(val);
+    if (abs >= 1000000) return `${(val / 1000000).toFixed(1)}m`;
+    if (abs >= 1000) return `${(val / 1000).toFixed(1)}k`;
+    return `${Math.round(val)}`;
+  };
+  const formatDateKey = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+  const formatDayLabel = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const formatMonthLabel = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  const getAccountCurrency = (accountId: string) => accounts.find(a => a.id === accountId)?.currency || settings.currency;
 
   const loadData = () => {
     setTransactions(db.getTransactions());
@@ -408,6 +437,135 @@ export const Transactions: React.FC = () => {
     return matchesSearch && matchesType && matchesCategory && matchesDate;
   });
 
+  type DailyEntry = {
+    key: string;
+    label: string;
+    date: Date;
+    income: number;
+    expense: number;
+    investment: number;
+    goals: number;
+    net: number;
+  };
+
+  const buildDailySeriesRange = (startKey: string, endKey: string, txs: Transaction[]) => {
+    if (!startKey || !endKey) return [] as DailyEntry[];
+    const start = new Date(startKey);
+    const end = new Date(endKey);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [] as DailyEntry[];
+    const map = new Map<string, DailyEntry>();
+
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const key = formatDateKey(cursor);
+      map.set(key, {
+        key,
+        label: formatDayLabel(cursor),
+        date: new Date(cursor),
+        income: 0,
+        expense: 0,
+        investment: 0,
+        goals: 0,
+        net: 0
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    txs.forEach(t => {
+      const entry = map.get(t.date);
+      if (!entry) return;
+      if (t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out') return;
+      const currency = getAccountCurrency(t.accountId);
+      const rawAmount = t.type === 'EXPENSE' ? Math.max(0, t.amount - (t.sponsoredAmount || 0)) : t.amount;
+      const amount = db.convertAmount(rawAmount, currency, settings.currency);
+
+      if (t.type === 'INCOME') entry.income += amount;
+      if (t.type === 'EXPENSE') entry.expense += amount;
+      if (t.type === 'INVESTMENT') entry.investment += amount;
+      if (t.type === 'GOAL') entry.goals += amount;
+    });
+
+    map.forEach(entry => {
+      entry.net = entry.income - entry.expense - entry.investment - entry.goals;
+    });
+
+    return Array.from(map.values());
+  };
+
+  const buildDailySeries = (monthKey: string, txs: Transaction[]) => {
+    if (!monthKey) return [] as DailyEntry[];
+    const [year, month] = monthKey.split('-').map(Number);
+    if (!year || !month) return [] as DailyEntry[];
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    return buildDailySeriesRange(formatDateKey(start), formatDateKey(end), txs);
+  };
+
+  const buildRollingSeries = (series: DailyEntry[], shortWindow = 7, longWindow = 30) =>
+    series.map((entry, idx) => {
+      const shortSlice = series.slice(Math.max(0, idx - shortWindow + 1), idx + 1);
+      const longSlice = series.slice(Math.max(0, idx - longWindow + 1), idx + 1);
+      const net7 = shortSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, shortSlice.length);
+      const net30 = longSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, longSlice.length);
+      const exp7 = shortSlice.reduce((sum, d) => sum + d.expense, 0) / Math.max(1, shortSlice.length);
+      return { ...entry, net7, net30, exp7 };
+    });
+
+  const selectedMonthLabel = useMemo(() => {
+    if (!filterMonth) return '';
+    const [year, month] = filterMonth.split('-').map(Number);
+    if (!year || !month) return filterMonth;
+    return formatMonthLabel(new Date(year, month - 1, 1));
+  }, [filterMonth]);
+
+  const monthTransactions = useMemo(
+    () => (filterMonth ? filteredTransactions.filter(t => t.date.startsWith(filterMonth)) : []),
+    [filteredTransactions, filterMonth]
+  );
+
+  const monthDailySeries = useMemo(
+    () => buildDailySeries(filterMonth, monthTransactions),
+    [filterMonth, monthTransactions, accounts, settings.currency]
+  );
+
+  const monthRollingSeries = useMemo(() => buildRollingSeries(monthDailySeries), [monthDailySeries]);
+
+  const overallRange = useMemo(() => {
+    if (filteredTransactions.length === 0) {
+      if (filterStartDate && filterEndDate) return { start: filterStartDate, end: filterEndDate };
+      if (filterStartDate) return { start: filterStartDate, end: filterStartDate };
+      if (filterEndDate) return { start: filterEndDate, end: filterEndDate };
+      return { start: '', end: '' };
+    }
+
+    let minDate = filteredTransactions[0].date;
+    let maxDate = filteredTransactions[0].date;
+    filteredTransactions.forEach(tx => {
+      if (tx.date < minDate) minDate = tx.date;
+      if (tx.date > maxDate) maxDate = tx.date;
+    });
+
+    return {
+      start: filterStartDate || minDate,
+      end: filterEndDate || maxDate
+    };
+  }, [filteredTransactions, filterStartDate, filterEndDate]);
+
+  const overallDailySeries = useMemo(
+    () => buildDailySeriesRange(overallRange.start, overallRange.end, filteredTransactions),
+    [overallRange.start, overallRange.end, filteredTransactions, accounts, settings.currency]
+  );
+
+  const overallRollingSeries = useMemo(() => buildRollingSeries(overallDailySeries), [overallDailySeries]);
+  const activeRollingSeries = filterMonth ? monthRollingSeries : overallRollingSeries;
+  const dailyTickInterval = Math.max(1, Math.floor(activeRollingSeries.length / 8));
+  const overallRangeLabel = useMemo(() => {
+    if (!overallRange.start || !overallRange.end) return 'All time';
+    if (overallRange.start === overallRange.end) return overallRange.start;
+    return `${overallRange.start} → ${overallRange.end}`;
+  }, [overallRange.start, overallRange.end]);
+  const pulseScopeLabel = filterMonth ? selectedMonthLabel : overallRangeLabel;
+
   const currentFormAccount = accounts.find(a => a.id === formData.accountId);
   const currentFormSymbol = currentFormAccount ? getSymbol(currentFormAccount.currency) : settings.currencySymbol;
 
@@ -468,20 +626,49 @@ export const Transactions: React.FC = () => {
                     type="date" 
                     className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
                     value={filterStartDate}
-                    onChange={e => setFilterStartDate(e.target.value)}
+                    onChange={e => {
+                      setFilterMonth('');
+                      setFilterStartDate(e.target.value);
+                    }}
                   />
                   <span className="text-slate-600">-</span>
                   <input 
                     type="date" 
                     className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
                     value={filterEndDate}
-                    onChange={e => setFilterEndDate(e.target.value)}
+                    onChange={e => {
+                      setFilterMonth('');
+                      setFilterEndDate(e.target.value);
+                    }}
+                  />
+              </div>
+
+              <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-2">
+                  <input
+                    type="month"
+                    className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-28 p-1"
+                    value={filterMonth}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setFilterMonth(value);
+                      if (!value) {
+                        setFilterStartDate('');
+                        setFilterEndDate('');
+                        return;
+                      }
+                      const [year, month] = value.split('-').map(Number);
+                      if (!year || !month) return;
+                      const start = new Date(year, month - 1, 1);
+                      const end = new Date(year, month, 0);
+                      setFilterStartDate(formatDateKey(start));
+                      setFilterEndDate(formatDateKey(end));
+                    }}
                   />
               </div>
               
-              {(filterType !== 'ALL' || filterCategory !== 'ALL' || filterStartDate || filterEndDate) && (
+              {(filterType !== 'ALL' || filterCategory !== 'ALL' || filterStartDate || filterEndDate || filterMonth) && (
                   <button 
-                    onClick={() => { setFilterType('ALL'); setFilterCategory('ALL'); setFilterStartDate(''); setFilterEndDate(''); setSearch(''); }}
+                    onClick={() => { setFilterType('ALL'); setFilterCategory('ALL'); setFilterStartDate(''); setFilterEndDate(''); setFilterMonth(''); setSearch(''); }}
                     className="p-2 bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-colors"
                     title="Clear Filters"
                   >
@@ -489,6 +676,53 @@ export const Transactions: React.FC = () => {
                   </button>
               )}
           </div>
+      </div>
+
+      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 text-slate-200 text-sm font-bold">
+            <span className="p-2 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400">
+              <Activity size={14} />
+            </span>
+            <span>Daily Pulse (Net + Rolling)</span>
+          </div>
+          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{pulseScopeLabel}</span>
+        </div>
+        <div className="h-[220px]">
+          {activeRollingSeries.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={activeRollingSeries}>
+                <defs>
+                  <linearGradient id="txDailyNetGlow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  interval={dailyTickInterval}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
+                />
+                <YAxis tickFormatter={formatCompact} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
+                  formatter={(val: any, name?: string) => [formatMoney(Number(val)), name || 'Value']}
+                />
+                <Bar dataKey="expense" name="Expense" fill="#f43f5e" opacity={0.35} />
+                <Area dataKey="net" name="Net" stroke="#22d3ee" fill="url(#txDailyNetGlow)" strokeWidth={2} connectNulls />
+                <Line dataKey="net7" name="Net 7D" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
+                <Line dataKey="net30" name="Net 30D" stroke="#a855f7" strokeWidth={1.2} dot={false} strokeDasharray="4 4" />
+                <Legend iconSize={8} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-slate-600">No daily data</div>
+          )}
+        </div>
+        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">Bars show daily spend; lines show net and rolling averages.</p>
       </div>
 
       <div className="hidden md:block bg-slate-900/50 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
@@ -517,7 +751,7 @@ export const Transactions: React.FC = () => {
                     handleDelete={handleDelete}
                 />
               ))}
-              {filteredTransactions.length === 0 && (
+                  {filteredTransactions.length === 0 && (
                   <tr>
                       <td colSpan={6} className="px-6 py-12 text-center text-slate-500 font-bold">No transactions found matching your criteria.</td>
                   </tr>
@@ -527,7 +761,7 @@ export const Transactions: React.FC = () => {
       </div>
 
       <div className="md:hidden">
-          {filteredTransactions.map((tx, idx) => (
+                {filteredTransactions.map((tx, idx) => (
                 <TransactionItem 
                     key={tx.id} 
                     tx={tx} 
@@ -540,7 +774,7 @@ export const Transactions: React.FC = () => {
                     handleDelete={handleDelete}
                 />
           ))}
-          {filteredTransactions.length === 0 && (
+              {filteredTransactions.length === 0 && (
               <div className="py-12 text-center text-slate-500 font-bold border border-dashed border-slate-800 rounded-xl">No transactions found.</div>
           )}
       </div>

@@ -34,14 +34,20 @@ export const Dashboard: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [goals, setGoals] = useState<Goal[]>(db.getGoals());
   
-    type DashboardRangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
+    type DashboardRangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL' | 'CUSTOM';
     const dashboardRangeOptions: DashboardRangeKey[] = ['1M', '3M', '6M', '1Y', 'ALL'];
     const [dashboardRange, setDashboardRange] = useState<DashboardRangeKey>(() => db.getSettings().dashboardRange || '1M');
+    const [customRange, setCustomRange] = useState(() => ({
+        start: db.getSettings().reportsCustomStart || '',
+        end: db.getSettings().reportsCustomEnd || ''
+    }));
+    const [pickedMonth, setPickedMonth] = useState(() => db.getSettings().reportsPickedMonth || '');
     const historyRange = useMemo(() => {
         if (dashboardRange === 'ALL') return 'ALL';
         if (dashboardRange === '1M') return 1;
         if (dashboardRange === '3M') return 3;
         if (dashboardRange === '6M') return 6;
+        if (dashboardRange === 'CUSTOM') return 'ALL';
         return 12;
     }, [dashboardRange]);
   const [history, setHistory] = useState<any[]>([]);
@@ -193,9 +199,13 @@ export const Dashboard: React.FC = () => {
     return () => unsubscribe();
   }, [historyRange]);
 
-    useEffect(() => {
+        useEffect(() => {
             db.updateSettings({ dashboardRange });
-    }, [dashboardRange]);
+        }, [dashboardRange]);
+
+        useEffect(() => {
+        db.updateSettings({ reportsCustomStart: customRange.start, reportsCustomEnd: customRange.end, reportsPickedMonth: pickedMonth });
+        }, [customRange.start, customRange.end, pickedMonth]);
 
   useEffect(() => {
     if (transactions.length >= 3 && aiInsights.length === 0 && !isAiLoading) {
@@ -309,15 +319,37 @@ export const Dashboard: React.FC = () => {
       return `${y}-${m}-${d}`;
   };
 
+  const monthToRange = (monthValue: string) => {
+      if (!monthValue) return null;
+      const [y, m] = monthValue.split('-').map(Number);
+      if (!y || !m) return null;
+      const start = new Date(y, m - 1, 1);
+      const end = new Date(y, m, 0);
+      return { start, end };
+  };
+
   const getAccountCurrency = (accountId: string) => accounts.find(a => a.id === accountId)?.currency || settings.currency;
 
   const dashboardRangeInfo = useMemo(() => {
       const today = new Date();
-      const endKey = formatDateKey(today);
       let startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      let endDate = today;
       let label = dashboardRange === 'ALL' ? 'All' : dashboardRange;
 
-      if (dashboardRange === 'ALL') {
+      if (dashboardRange === 'CUSTOM') {
+          if (customRange.start && customRange.end) {
+              startDate = new Date(customRange.start);
+              endDate = new Date(customRange.end);
+              label = 'Custom';
+          } else {
+              const monthRange = monthToRange(pickedMonth);
+              if (monthRange) {
+                  startDate = monthRange.start;
+                  endDate = monthRange.end;
+                  label = pickedMonth;
+              }
+          }
+      } else if (dashboardRange === 'ALL') {
           if (transactions.length > 0) {
               const earliest = transactions.reduce((acc, t) => t.date < acc ? t.date : acc, transactions[0].date);
               const [y, m, d] = earliest.split('-').map(Number);
@@ -329,9 +361,10 @@ export const Dashboard: React.FC = () => {
       }
 
       const startKey = formatDateKey(startDate);
-      const rangeDays = Math.max(1, Math.round((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      const endKey = formatDateKey(endDate);
+      const rangeDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
       return { startKey, endKey, rangeDays, label };
-  }, [dashboardRange, transactions]);
+  }, [dashboardRange, transactions, customRange.start, customRange.end, pickedMonth]);
 
   const dashboardRangeTxs = useMemo(
       () => transactions.filter(t => t.date >= dashboardRangeInfo.startKey && t.date <= dashboardRangeInfo.endKey),
@@ -399,10 +432,17 @@ export const Dashboard: React.FC = () => {
       { name: 'Investments', value: dashboardAllocationStats.investment, color: '#8b5cf6' }
   ].filter(item => item.value > 0), [dashboardAllocationStats]);
 
-  const cashFlowData = useMemo(() => {
+  const rangeHistory = useMemo(() => {
       if (history.length === 0) return [];
+      const startMonth = dashboardRangeInfo.startKey.substring(0, 7);
+      const endMonth = dashboardRangeInfo.endKey.substring(0, 7);
+      return history.filter(entry => entry.date >= startMonth && entry.date <= endMonth);
+  }, [history, dashboardRangeInfo.startKey, dashboardRangeInfo.endKey]);
 
-      const entries = history.map(entry => ({
+  const cashFlowData = useMemo(() => {
+      if (rangeHistory.length === 0) return [];
+
+      const entries = rangeHistory.map(entry => ({
           date: entry.date,
           formattedDate: entry.formattedDate,
           income: 0,
@@ -438,11 +478,11 @@ export const Dashboard: React.FC = () => {
 
       entries.forEach(entry => {
           const outflow = entry.needs + entry.wants + entry.investment;
-          entry.savings = Math.max(0, entry.income - outflow);
+          entry.savings = entry.income - outflow;
       });
 
       return entries;
-  }, [history, transactions, accounts, categories, settings.currency]);
+    }, [rangeHistory, transactions, accounts, categories, settings.currency]);
 
   const formatMoney = (val: number) => `${settings.currencySymbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -533,18 +573,69 @@ export const Dashboard: React.FC = () => {
               <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Global Range</p>
               <p className="text-xs text-slate-600">Used across dashboard charts</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
-              {dashboardRangeOptions.map(key => (
+          <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
+                  {dashboardRangeOptions.map(key => (
+                      <button
+                          key={key}
+                          onClick={() => setDashboardRange(key)}
+                          className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                              dashboardRange === key ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                      >
+                          {key === 'ALL' ? 'All' : key}
+                      </button>
+                  ))}
                   <button
-                      key={key}
-                      onClick={() => setDashboardRange(key)}
+                      onClick={() => setDashboardRange('CUSTOM')}
                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                          dashboardRange === key ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
+                          dashboardRange === 'CUSTOM' ? 'bg-cyan-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
                       }`}
                   >
-                      {key === 'ALL' ? 'All' : key}
+                      Custom
                   </button>
-              ))}
+              </div>
+
+              {dashboardRange === 'CUSTOM' && (
+                  <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+                          <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Start</span>
+                          <input
+                              type="date"
+                              className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                              value={customRange.start}
+                              onChange={(e) => {
+                                  setPickedMonth('');
+                                  setCustomRange(prev => ({ ...prev, start: e.target.value }));
+                              }}
+                          />
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+                          <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">End</span>
+                          <input
+                              type="date"
+                              className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                              value={customRange.end}
+                              onChange={(e) => {
+                                  setPickedMonth('');
+                                  setCustomRange(prev => ({ ...prev, end: e.target.value }));
+                              }}
+                          />
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+                          <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Month</span>
+                          <input
+                              type="month"
+                              className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                              value={pickedMonth}
+                              onChange={(e) => {
+                                  setCustomRange({ start: '', end: '' });
+                                  setPickedMonth(e.target.value);
+                              }}
+                          />
+                      </div>
+                  </div>
+              )}
           </div>
       </div>
 
@@ -864,7 +955,7 @@ export const Dashboard: React.FC = () => {
                                 <Line type="monotone" dataKey="savings" name="Savings" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3, fill: '#22d3ee' }} activeDot={{ r: 5 }} />
                             </RechartsLineChart>
                         ) : (
-                            <AreaChart data={history} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
+                            <AreaChart data={rangeHistory} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
                                 <defs>
                                     <linearGradient id="cashFlowNetWorth" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>

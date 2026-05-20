@@ -955,31 +955,40 @@ export const Planning: React.FC = () => {
                            <span className="text-xs font-mono text-amber-400">{formatMoney(goalTotalCurrent)} / {formatMoney(goalTotalTarget)}</span>
                        )}
                    </div>
-                   <div className="p-6 space-y-4">
+                   <div className="p-6">
                        {goals.length === 0 ? (
                            <div className="text-slate-500 text-xs italic text-center py-4">No goals yet. Create one in the Dashboard.</div>
                        ) : (
-                           goals.map(goal => {
-                               const target = Math.max(1, goal.targetAmount || 0);
-                               const percent = Math.min(100, (goal.currentAmount / target) * 100);
-                               return (
-                                   <div key={goal.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/20">
-                                       <div className="flex items-center justify-between mb-2">
-                                           <div>
-                                               <p className="text-sm font-bold text-slate-200">{goal.name}</p>
-                                               <p className="text-[10px] text-slate-500">Target {formatMoney(goal.targetAmount)}</p>
-                                           </div>
-                                           <div className="text-right">
-                                               <p className="text-xs font-mono text-slate-300">{formatMoney(goal.currentAmount)}</p>
-                                               <p className="text-[10px] text-slate-500">{percent.toFixed(0)}%</p>
-                                           </div>
-                                       </div>
-                                       <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                                           <div className="h-full rounded-full transition-all duration-700" style={{width: `${percent}%`, backgroundColor: goal.color || '#f59e0b'}}></div>
-                                       </div>
+                           <div className="space-y-4">
+                               <div className="grid grid-cols-2 gap-4">
+                                   <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+                                       <p className="text-[10px] text-slate-500 uppercase tracking-widest">Goal Locked</p>
+                                       <p className="text-2xl font-black text-amber-400 mt-1">{formatMoney(goalTotalCurrent)}</p>
                                    </div>
-                               );
-                           })
+                                   <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+                                       <p className="text-[10px] text-slate-500 uppercase tracking-widest">Target Total</p>
+                                       <p className="text-2xl font-black text-slate-100 mt-1">{formatMoney(goalTotalTarget)}</p>
+                                   </div>
+                               </div>
+                               <div className="rounded-xl border border-slate-800 bg-slate-900/20 p-4">
+                                   <div className="flex justify-between items-center text-xs font-bold mb-2">
+                                       <span className="text-slate-400">Progress</span>
+                                       <span className="text-amber-400">
+                                           {goalTotalTarget > 0 ? `${Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100).toFixed(0)}%` : '0%'}
+                                       </span>
+                                   </div>
+                                   <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden">
+                                       <div
+                                           className="h-full bg-amber-500 transition-all duration-700"
+                                           style={{ width: `${goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 0}%` }}
+                                       ></div>
+                                   </div>
+                                   <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500">
+                                       <span>Goal inflow in range</span>
+                                       <span className="text-amber-400 font-mono">{formatMoney(goalFeedTotal)}</span>
+                                   </div>
+                               </div>
+                           </div>
                        )}
                    </div>
                </div>

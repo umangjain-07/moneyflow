@@ -89,7 +89,7 @@ export interface AppSettings {
   emergencyFundTargetMonths: number; 
   savingsGoalPercent: number;
   betaLabEnabled?: boolean;
-  dashboardRange?: '1M' | '3M' | '6M' | '1Y' | 'ALL';
+  dashboardRange?: '1M' | '3M' | '6M' | '1Y' | 'ALL' | 'CUSTOM';
   reportsTimeRange?: string;
   reportsSpendingMode?: 'ACTIVITY' | 'BURNDOWN' | 'SCATTER';
   reportsPickedMonth?: string;

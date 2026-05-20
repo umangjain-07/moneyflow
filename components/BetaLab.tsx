@@ -24,7 +24,8 @@ import {
   Line,
   BarChart,
   Bar,
-  Cell
+  Cell,
+  ReferenceLine
 } from 'recharts';
 
 const WidgetCard: React.FC<{ id: string; title: string; icon?: any; accent?: string; children: React.ReactNode }> = ({
@@ -106,18 +107,23 @@ export const BetaLab: React.FC = () => {
 
   useEffect(() => {
     const loadData = () => {
-      setSettings(db.getSettings());
+      const loaded = db.getSettings();
+      setSettings(loaded);
       setTransactions(db.getTransactions());
       setAccounts(db.getAccounts());
       setCategories(db.getCategories());
       setGoals(db.getGoals());
       setHealth(db.getFinancialHealth());
+      setRange((loaded.dashboardRange as RangeKey) || '6M');
+      setCustomRange({ start: loaded.reportsCustomStart || '', end: loaded.reportsCustomEnd || '' });
+      setPickedMonth(loaded.reportsPickedMonth || '');
     };
 
     loadData();
     const unsubscribe = subscribe(loadData);
     return () => unsubscribe();
   }, []);
+
 
   if (!settings.betaLabEnabled) {
     return (
@@ -148,16 +154,55 @@ export const BetaLab: React.FC = () => {
 
   const getAccountCurrency = (accountId: string) => accounts.find(a => a.id === accountId)?.currency || settings.currency;
 
-  type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
-  const [range, setRange] = useState<RangeKey>('6M');
+  type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL' | 'CUSTOM';
+  const [range, setRange] = useState<RangeKey>(() => (db.getSettings().dashboardRange as RangeKey) || '6M');
+  const [customRange, setCustomRange] = useState(() => ({
+    start: db.getSettings().reportsCustomStart || '',
+    end: db.getSettings().reportsCustomEnd || ''
+  }));
+  const [pickedMonth, setPickedMonth] = useState(() => db.getSettings().reportsPickedMonth || '');
+
+  useEffect(() => {
+    db.updateSettings({
+      dashboardRange: range,
+      reportsCustomStart: customRange.start,
+      reportsCustomEnd: customRange.end,
+      reportsPickedMonth: pickedMonth
+    });
+  }, [range, customRange.start, customRange.end, pickedMonth]);
+
+  const [transactionView, setTransactionView] = useState<'ALL' | 'MONTH'>('ALL');
+  const [selectedMonthKey, setSelectedMonthKey] = useState('');
+
+  const monthToRange = (monthValue: string) => {
+    if (!monthValue) return null;
+    const [y, m] = monthValue.split('-').map(Number);
+    if (!y || !m) return null;
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0);
+    return { start, end };
+  };
 
   const rangeInfo = useMemo(() => {
     const today = new Date();
-    const endKey = formatDateKey(today);
     let startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    let endDate = today;
     let label = range === 'ALL' ? 'All' : range;
 
-    if (range === 'ALL') {
+    if (range === 'CUSTOM') {
+      if (customRange.start && customRange.end) {
+        startDate = new Date(customRange.start);
+        endDate = new Date(customRange.end);
+        label = 'Custom';
+      } else {
+        const monthRange = monthToRange(pickedMonth);
+        if (monthRange) {
+          startDate = monthRange.start;
+          endDate = monthRange.end;
+          label = pickedMonth;
+        }
+      }
+    } else if (range === 'ALL') {
       if (transactions.length > 0) {
         const earliest = transactions.reduce((acc, t) => t.date < acc ? t.date : acc, transactions[0].date);
         const [y, m, d] = earliest.split('-').map(Number);
@@ -169,10 +214,11 @@ export const BetaLab: React.FC = () => {
     }
 
     const startKey = formatDateKey(startDate);
-    const rangeDays = Math.max(1, Math.round((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    const endKey = formatDateKey(endDate);
+    const rangeDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
 
     return { startKey, endKey, rangeDays, label };
-  }, [range, transactions]);
+  }, [range, transactions, customRange.start, customRange.end, pickedMonth]);
 
   const rangeTxs = useMemo(
     () => transactions.filter(t => t.date >= rangeInfo.startKey && t.date <= rangeInfo.endKey),
@@ -251,21 +297,59 @@ export const BetaLab: React.FC = () => {
     return Array.from(byMonth.values());
   }, [rangeInfo.startKey, rangeInfo.endKey, rangeTxs, accounts, settings.currency]);
 
-  const dailySeries = useMemo(() => {
+  const monthOptions = useMemo(
+    () => monthlySeries.map(entry => ({ key: entry.key, label: entry.label })),
+    [monthlySeries]
+  );
+
+  useEffect(() => {
+    if (!monthOptions.length) return;
+    if (selectedMonthKey && monthOptions.some(option => option.key === selectedMonthKey)) return;
+    setSelectedMonthKey(monthOptions[monthOptions.length - 1].key);
+  }, [monthOptions, selectedMonthKey]);
+
+  const selectedMonthLabel = useMemo(() => {
+    if (!selectedMonthKey) return 'Month';
+    return monthOptions.find(option => option.key === selectedMonthKey)?.label || selectedMonthKey;
+  }, [monthOptions, selectedMonthKey]);
+
+  type DailyEntry = {
+    key: string;
+    label: string;
+    date: Date;
+    income: number;
+    expense: number;
+    investment: number;
+    goals: number;
+    net: number;
+    txCount: number;
+    expenseCount: number;
+  };
+
+  const buildRollingSeries = (series: DailyEntry[], shortWindow = 7, longWindow = 30) =>
+    series.map((entry, idx) => {
+      const shortSlice = series.slice(Math.max(0, idx - shortWindow + 1), idx + 1);
+      const longSlice = series.slice(Math.max(0, idx - longWindow + 1), idx + 1);
+      const net7 = shortSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, shortSlice.length);
+      const net30 = longSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, longSlice.length);
+      const exp7 = shortSlice.reduce((sum, d) => sum + d.expense, 0) / Math.max(1, shortSlice.length);
+      return { ...entry, net7, net30, exp7 };
+    });
+
+  const buildHeatmapCells = (series: DailyEntry[]) => {
+    const maxAbs = Math.max(1, ...series.map(d => Math.abs(d.net)));
+    return series.map(entry => {
+      const intensity = Math.min(1, Math.abs(entry.net) / maxAbs);
+      const alpha = 0.15 + intensity * 0.6;
+      const color = entry.net >= 0 ? `rgba(16, 185, 129, ${alpha})` : `rgba(244, 63, 94, ${alpha})`;
+      return { ...entry, color, intensity };
+    });
+  };
+
+  const dailySeries = useMemo<DailyEntry[]>(() => {
     const start = new Date(rangeInfo.startKey);
     const end = new Date(rangeInfo.endKey);
-    const map = new Map<string, {
-      key: string;
-      label: string;
-      date: Date;
-      income: number;
-      expense: number;
-      investment: number;
-      goals: number;
-      net: number;
-      txCount: number;
-      expenseCount: number;
-    }>();
+    const map = new Map<string, DailyEntry>();
 
     const cursor = new Date(start);
     while (cursor <= end) {
@@ -311,18 +395,21 @@ export const BetaLab: React.FC = () => {
     return Array.from(map.values());
   }, [rangeInfo.startKey, rangeInfo.endKey, rangeTxs, accounts, settings.currency]);
 
-  const rollingSeries = useMemo(() => {
-    const shortWindow = 7;
-    const longWindow = 30;
-    return dailySeries.map((entry, idx) => {
-      const shortSlice = dailySeries.slice(Math.max(0, idx - shortWindow + 1), idx + 1);
-      const longSlice = dailySeries.slice(Math.max(0, idx - longWindow + 1), idx + 1);
-      const net7 = shortSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, shortSlice.length);
-      const net30 = longSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, longSlice.length);
-      const exp7 = shortSlice.reduce((sum, d) => sum + d.expense, 0) / Math.max(1, shortSlice.length);
-      return { ...entry, net7, net30, exp7 };
-    });
-  }, [dailySeries]);
+  const rollingSeries = useMemo(() => buildRollingSeries(dailySeries), [dailySeries]);
+
+  const monthTxs = useMemo(
+    () => (selectedMonthKey ? rangeTxs.filter(t => t.date.startsWith(selectedMonthKey)) : []),
+    [rangeTxs, selectedMonthKey]
+  );
+
+  const monthDailySeries = useMemo(
+    () => (selectedMonthKey ? dailySeries.filter(day => day.key.startsWith(selectedMonthKey)) : []),
+    [dailySeries, selectedMonthKey]
+  );
+
+  const monthRollingSeries = useMemo(() => buildRollingSeries(monthDailySeries), [monthDailySeries]);
+  const heatmapCells = useMemo(() => buildHeatmapCells(dailySeries), [dailySeries]);
+  const monthHeatmapCells = useMemo(() => buildHeatmapCells(monthDailySeries), [monthDailySeries]);
 
   const percentile = (values: number[], p: number) => {
     if (values.length === 0) return 0;
@@ -335,7 +422,49 @@ export const BetaLab: React.FC = () => {
     return sorted[lower] * (1 - weight) + sorted[upper] * weight;
   };
 
-  const expenseStats = useMemo(() => {
+  const buildExpenseStats = (values: number[]) => {
+    const total = values.reduce((sum, val) => sum + val, 0);
+    const avg = values.length > 0 ? total / values.length : 0;
+    const p25 = percentile(values, 0.25);
+    const median = percentile(values, 0.5);
+    const p75 = percentile(values, 0.75);
+    const p90 = percentile(values, 0.9);
+    const p95 = percentile(values, 0.95);
+    const max = values.length > 0 ? Math.max(...values) : 0;
+
+    return { avg, p25, median, p75, p90, p95, max, count: values.length };
+  };
+
+  const buildExpenseDistribution = (values: number[]) => {
+    if (values.length === 0) return [];
+    const max = Math.max(1, ...values);
+    const binCount = Math.min(24, Math.max(12, Math.round(Math.sqrt(values.length))));
+    const binSize = max / binCount;
+    const bins = new Array(binCount).fill(0);
+
+    values.forEach(val => {
+      const idx = Math.min(binCount - 1, Math.floor(val / binSize));
+      bins[idx] += 1;
+    });
+
+    let cumulative = 0;
+    const raw = bins.map((count, idx) => {
+      const start = idx * binSize;
+      const end = start + binSize;
+      const mid = start + binSize / 2;
+      const density = count / values.length;
+      cumulative += density;
+      return { mid, start, end, density, cumulative, count };
+    });
+
+    return raw.map((entry, idx) => {
+      const prev = raw[idx - 1]?.density ?? entry.density;
+      const next = raw[idx + 1]?.density ?? entry.density;
+      return { ...entry, smooth: (prev + entry.density + next) / 3 };
+    });
+  };
+
+  const expenseValues = useMemo(() => {
     const values: number[] = [];
     rangeTxs.forEach(t => {
       if (t.type !== 'EXPENSE') return;
@@ -344,17 +473,26 @@ export const BetaLab: React.FC = () => {
       const net = Math.max(0, t.amount - (t.sponsoredAmount || 0));
       values.push(db.convertAmount(net, currency, settings.currency));
     });
-
-    const total = values.reduce((sum, val) => sum + val, 0);
-    const avg = values.length > 0 ? total / values.length : 0;
-    const median = percentile(values, 0.5);
-    const p75 = percentile(values, 0.75);
-    const p90 = percentile(values, 0.9);
-    const p95 = percentile(values, 0.95);
-    const max = values.length > 0 ? Math.max(...values) : 0;
-
-    return { avg, median, p75, p90, p95, max, count: values.length };
+    return values;
   }, [rangeTxs, accounts, settings.currency]);
+
+  const monthExpenseValues = useMemo(() => {
+    const values: number[] = [];
+    monthTxs.forEach(t => {
+      if (t.type !== 'EXPENSE') return;
+      if (t.categoryId === 'transfer_in' || t.categoryId === 'transfer_out') return;
+      const currency = getAccountCurrency(t.accountId);
+      const net = Math.max(0, t.amount - (t.sponsoredAmount || 0));
+      values.push(db.convertAmount(net, currency, settings.currency));
+    });
+    return values;
+  }, [monthTxs, accounts, settings.currency]);
+
+  const expenseStats = useMemo(() => buildExpenseStats(expenseValues), [expenseValues]);
+  const monthExpenseStats = useMemo(() => buildExpenseStats(monthExpenseValues), [monthExpenseValues]);
+
+  const expenseDistribution = useMemo(() => buildExpenseDistribution(expenseValues), [expenseValues]);
+  const monthExpenseDistribution = useMemo(() => buildExpenseDistribution(monthExpenseValues), [monthExpenseValues]);
 
   const txStats = useMemo(() => {
     const validTxs = rangeTxs.filter(t => t.categoryId !== 'transfer_in' && t.categoryId !== 'transfer_out');
@@ -405,23 +543,28 @@ export const BetaLab: React.FC = () => {
     });
   }, [monthlySeries, dailySeries]);
 
-  const heatmapCells = useMemo(() => {
-    const maxAbs = Math.max(1, ...dailySeries.map(d => Math.abs(d.net)));
-    return dailySeries.map(entry => {
-      const intensity = Math.min(1, Math.abs(entry.net) / maxAbs);
-      const alpha = 0.15 + intensity * 0.6;
-      const color = entry.net >= 0 ? `rgba(16, 185, 129, ${alpha})` : `rgba(244, 63, 94, ${alpha})`;
-      return { ...entry, color, intensity };
-    });
-  }, [dailySeries]);
+  const monthLedgerRow = useMemo(
+    () => monthlyLedger.find(row => row.key === selectedMonthKey),
+    [monthlyLedger, selectedMonthKey]
+  );
 
   const expenseQuantiles = useMemo(() => [
+    { label: 'P25', value: expenseStats.p25, color: '#0ea5e9' },
     { label: 'P50', value: expenseStats.median, color: '#38bdf8' },
     { label: 'P75', value: expenseStats.p75, color: '#22d3ee' },
     { label: 'P90', value: expenseStats.p90, color: '#f59e0b' },
     { label: 'P95', value: expenseStats.p95, color: '#f97316' },
     { label: 'Max', value: expenseStats.max, color: '#f43f5e' }
   ], [expenseStats]);
+
+  const monthExpenseQuantiles = useMemo(() => [
+    { label: 'P25', value: monthExpenseStats.p25, color: '#0ea5e9' },
+    { label: 'P50', value: monthExpenseStats.median, color: '#38bdf8' },
+    { label: 'P75', value: monthExpenseStats.p75, color: '#22d3ee' },
+    { label: 'P90', value: monthExpenseStats.p90, color: '#f59e0b' },
+    { label: 'P95', value: monthExpenseStats.p95, color: '#f97316' },
+    { label: 'Max', value: monthExpenseStats.max, color: '#f43f5e' }
+  ], [monthExpenseStats]);
 
   const buildRegression = (values: number[]) => {
     const n = values.length;
@@ -599,6 +742,26 @@ export const BetaLab: React.FC = () => {
     ? `${formatMoney(goalTotals.current)} / ${formatMoney(goalTotals.target)}`
     : 'No goal targets yet';
   const dailyTickInterval = Math.max(1, Math.floor(rollingSeries.length / 8));
+  const monthDailyTickInterval = Math.max(1, Math.floor(monthRollingSeries.length / 8));
+  const activeDailyTickInterval = transactionView === 'MONTH' ? monthDailyTickInterval : dailyTickInterval;
+  const activeRollingSeries = transactionView === 'MONTH' ? monthRollingSeries : rollingSeries;
+  const activeHeatmapCells = transactionView === 'MONTH' ? monthHeatmapCells : heatmapCells;
+  const activeExpenseDistribution = transactionView === 'MONTH' ? monthExpenseDistribution : expenseDistribution;
+  const activeExpenseStats = transactionView === 'MONTH' ? monthExpenseStats : expenseStats;
+  const activeExpenseQuantiles = transactionView === 'MONTH' ? monthExpenseQuantiles : expenseQuantiles;
+  const activeLedgerRows = transactionView === 'MONTH' ? (monthLedgerRow ? [monthLedgerRow] : []) : monthlyLedger;
+  const dailyPulseTitle = transactionView === 'MONTH'
+    ? `Daily Pulse (Net + Rolling · ${selectedMonthLabel})`
+    : 'Daily Pulse (Net + Rolling)';
+  const heatmapTitle = transactionView === 'MONTH'
+    ? `Net Heatmap (${selectedMonthLabel})`
+    : 'Net Heatmap (Daily)';
+  const ledgerTitle = transactionView === 'MONTH'
+    ? `Ledger Snapshot (${selectedMonthLabel})`
+    : 'Ledger Grid (Monthly)';
+  const distTitle = transactionView === 'MONTH'
+    ? `Expense Distribution (${selectedMonthLabel})`
+    : 'Expense Distribution Curve';
 
   return (
     <div className="relative space-y-6 animate-in fade-in duration-500 font-['Space_Grotesk']">
@@ -615,18 +778,69 @@ export const BetaLab: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
-        {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(key => (
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
+          {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(key => (
+            <button
+              key={key}
+              onClick={() => setRange(key)}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                range === key ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {key === 'ALL' ? 'All' : key}
+            </button>
+          ))}
           <button
-            key={key}
-            onClick={() => setRange(key)}
+            onClick={() => setRange('CUSTOM')}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              range === key ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
+              range === 'CUSTOM' ? 'bg-cyan-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
             }`}
           >
-            {key === 'ALL' ? 'All' : key}
+            Custom
           </button>
-        ))}
+        </div>
+
+        {range === 'CUSTOM' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Start</span>
+              <input
+                type="date"
+                className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                value={customRange.start}
+                onChange={(e) => {
+                  setPickedMonth('');
+                  setCustomRange(prev => ({ ...prev, start: e.target.value }));
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">End</span>
+              <input
+                type="date"
+                className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                value={customRange.end}
+                onChange={(e) => {
+                  setPickedMonth('');
+                  setCustomRange(prev => ({ ...prev, end: e.target.value }));
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
+              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Month</span>
+              <input
+                type="month"
+                className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                value={pickedMonth}
+                onChange={(e) => {
+                  setCustomRange({ start: '', end: '' });
+                  setPickedMonth(e.target.value);
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -687,12 +901,51 @@ export const BetaLab: React.FC = () => {
         </p>
       </WidgetCard>
 
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-2">
+            <button
+              onClick={() => setTransactionView('ALL')}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                transactionView === 'ALL' ? 'bg-slate-200 text-slate-900 shadow-lg' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              All Range
+            </button>
+            <button
+              onClick={() => setTransactionView('MONTH')}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                transactionView === 'MONTH' ? 'bg-cyan-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Monthly Breakdown
+            </button>
+          </div>
+
+          {transactionView === 'MONTH' && monthOptions.length > 0 && (
+            <div className="flex max-w-full items-center gap-2 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60 p-2">
+              {monthOptions.map(option => (
+                <button
+                  key={option.key}
+                  onClick={() => setSelectedMonthKey(option.key)}
+                  className={`whitespace-nowrap px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    selectedMonthKey === option.key ? 'bg-emerald-500 text-slate-950' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WidgetCard id="DAILY-01" title="Daily Pulse (Net + Rolling)" icon={Activity} accent="#22d3ee">
+        <WidgetCard id="DAILY-01" title={dailyPulseTitle} icon={Activity} accent="#22d3ee">
           <div className="h-[260px]">
-            {rollingSeries.length > 0 ? (
+            {activeRollingSeries.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={rollingSeries}>
+                <ComposedChart data={activeRollingSeries}>
                   <defs>
                     <linearGradient id="dailyNetGlow" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.25} />
@@ -702,7 +955,7 @@ export const BetaLab: React.FC = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                   <XAxis
                     dataKey="label"
-                    interval={dailyTickInterval}
+                    interval={activeDailyTickInterval}
                     axisLine={false}
                     tickLine={false}
                     tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
@@ -726,9 +979,9 @@ export const BetaLab: React.FC = () => {
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">Bars show daily spend; lines show net and rolling averages.</p>
         </WidgetCard>
 
-        <WidgetCard id="HEAT-01" title="Net Heatmap (Daily)" icon={Sparkles} accent="#10b981">
+        <WidgetCard id="HEAT-01" title={heatmapTitle} icon={Sparkles} accent="#10b981">
           <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-1">
-            {heatmapCells.map(cell => (
+            {activeHeatmapCells.map(cell => (
               <div
                 key={cell.key}
                 className="h-5 rounded-sm border border-slate-900/70"
@@ -739,7 +992,7 @@ export const BetaLab: React.FC = () => {
           </div>
           <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500 uppercase tracking-widest">
             <span>Negative to Positive Net</span>
-            <span>{rangeInfo.rangeDays} days</span>
+            <span>{activeHeatmapCells.length} days</span>
           </div>
         </WidgetCard>
       </div>
@@ -889,80 +1142,139 @@ export const BetaLab: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <WidgetCard id="LEDGER-01" title="Ledger Grid (Monthly)" icon={LineChart} accent="#38bdf8">
-            <div className="overflow-x-auto">
-              <table className="w-full text-[10px] text-slate-300">
-                <thead className="uppercase tracking-widest text-slate-500">
-                  <tr>
-                    <th className="py-2 text-left">Month</th>
-                    <th className="py-2 text-right">Income</th>
-                    <th className="py-2 text-right">Expense</th>
-                    <th className="py-2 text-right">Invest</th>
-                    <th className="py-2 text-right">Goals</th>
-                    <th className="py-2 text-right">Net</th>
-                    <th className="py-2 text-right">Margin</th>
-                    <th className="py-2 text-right">Tx</th>
-                    <th className="py-2 text-right">Avg Exp</th>
-                    <th className="py-2 text-right">Max Day</th>
-                    <th className="py-2 text-right">Active</th>
-                  </tr>
-                </thead>
-                <tbody className="font-mono">
-                  {monthlyLedger.map((row, idx) => {
-                    const prevNet = idx > 0 ? monthlyLedger[idx - 1].net : 0;
-                    const delta = row.net - prevNet;
-                    const deltaClass = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                    return (
-                      <tr key={row.key} className="border-t border-slate-800/70">
-                        <td className="py-2 text-left text-slate-400 font-bold">{row.label}</td>
-                        <td className="py-2 text-right">{formatMoney(row.income)}</td>
-                        <td className="py-2 text-right">{formatMoney(row.expense)}</td>
-                        <td className="py-2 text-right">{formatMoney(row.investment)}</td>
-                        <td className="py-2 text-right">{formatMoney(row.goals)}</td>
-                        <td className={`py-2 text-right font-bold ${deltaClass}`}>{formatMoney(row.net)}</td>
-                        <td className="py-2 text-right">{row.margin.toFixed(0)}%</td>
-                        <td className="py-2 text-right">{row.txCount}</td>
-                        <td className="py-2 text-right">{formatMoney(row.avgExpenseTx)}</td>
-                        <td className="py-2 text-right">{formatMoney(row.maxDailyExpense)}</td>
-                        <td className="py-2 text-right">{row.activeDays}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <WidgetCard id="LEDGER-01" title={ledgerTitle} icon={LineChart} accent="#38bdf8">
+            {activeLedgerRows.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px] text-slate-300">
+                  <thead className="uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="py-2 text-left">Month</th>
+                      <th className="py-2 text-right">Income</th>
+                      <th className="py-2 text-right">Expense</th>
+                      <th className="py-2 text-right">Invest</th>
+                      <th className="py-2 text-right">Goals</th>
+                      <th className="py-2 text-right">Net</th>
+                      <th className="py-2 text-right">Δ Net</th>
+                      <th className="py-2 text-right">Margin</th>
+                      <th className="py-2 text-right">Tx</th>
+                      <th className="py-2 text-right">Avg Exp</th>
+                      <th className="py-2 text-right">Max Day</th>
+                      <th className="py-2 text-right">Active</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {activeLedgerRows.map(row => {
+                      const rowIndex = monthlyLedger.findIndex(entry => entry.key === row.key);
+                      const prevNet = rowIndex > 0 ? monthlyLedger[rowIndex - 1].net : 0;
+                      const delta = row.net - prevNet;
+                      const netClass = row.net >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                      const deltaClass = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                      return (
+                        <tr key={row.key} className="border-t border-slate-800/70">
+                          <td className="py-2 text-left text-slate-400 font-bold">{row.label}</td>
+                          <td className="py-2 text-right">{formatMoney(row.income)}</td>
+                          <td className="py-2 text-right">{formatMoney(row.expense)}</td>
+                          <td className="py-2 text-right">{formatMoney(row.investment)}</td>
+                          <td className="py-2 text-right">{formatMoney(row.goals)}</td>
+                          <td className={`py-2 text-right font-bold ${netClass}`}>{formatMoney(row.net)}</td>
+                          <td className={`py-2 text-right font-bold ${deltaClass}`}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</td>
+                          <td className="py-2 text-right">{row.margin.toFixed(0)}%</td>
+                          <td className="py-2 text-right">{row.txCount}</td>
+                          <td className="py-2 text-right">{formatMoney(row.avgExpenseTx)}</td>
+                          <td className="py-2 text-right">{formatMoney(row.maxDailyExpense)}</td>
+                          <td className="py-2 text-right">{row.activeDays}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="h-[160px] flex items-center justify-center text-slate-600">No ledger data</div>
+            )}
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">
               Rows include margin, transaction volume, and peak daily spend.
             </p>
           </WidgetCard>
         </div>
 
-        <WidgetCard id="DIST-01" title="Expense Distribution" icon={PieIcon} accent="#f59e0b">
-          <div className="space-y-3">
-            {expenseQuantiles.map(bucket => {
-              const width = expenseStats.max > 0 ? Math.min(100, (bucket.value / expenseStats.max) * 100) : 0;
-              return (
-                <div key={bucket.label}>
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span className="font-bold" style={{ color: bucket.color }}>{bucket.label}</span>
-                    <span className="font-mono">{formatMoney(bucket.value)}</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${width}%`, backgroundColor: bucket.color }}></div>
-                  </div>
-                </div>
-              );
-            })}
+        <WidgetCard id="DIST-01" title={distTitle} icon={PieIcon} accent="#f59e0b">
+          <div className="h-[240px]">
+            {activeExpenseDistribution.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={activeExpenseDistribution}>
+                  <defs>
+                    <linearGradient id="distBars" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.6} />
+                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis
+                    dataKey="mid"
+                    tickFormatter={(val) => formatCompact(Number(val))}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    tickFormatter={(val) => `${Math.round(Number(val))}`}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
+                    domain={[0, 'auto']}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tickFormatter={(val) => `${Math.round(Number(val) * 100)}%`}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
+                    domain={[0, 1]}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
+                    formatter={(val: any, name?: string) => {
+                      if (name === 'Count') return [Number(val).toFixed(0), 'Count'];
+                      return [`${(Number(val) * 100).toFixed(2)}%`, 'Density'];
+                    }}
+                    labelFormatter={(_, payload) => {
+                      const entry = payload?.[0]?.payload;
+                      if (entry) return `Range ${formatMoney(entry.start)} - ${formatMoney(entry.end)}`;
+                      return 'Expense Range';
+                    }}
+                  />
+                  <Bar yAxisId="left" dataKey="count" name="Count" fill="url(#distBars)" radius={[6, 6, 0, 0]} />
+                  <Line yAxisId="right" dataKey="smooth" name="Density" stroke="#38bdf8" strokeWidth={2.5} dot={false} />
+                  <ReferenceLine yAxisId="right" x={activeExpenseStats.p25} stroke="#0ea5e9" strokeDasharray="3 3" />
+                  <ReferenceLine yAxisId="right" x={activeExpenseStats.median} stroke="#38bdf8" strokeDasharray="3 3" />
+                  <ReferenceLine yAxisId="right" x={activeExpenseStats.p75} stroke="#22d3ee" strokeDasharray="3 3" />
+                  <ReferenceLine yAxisId="right" x={activeExpenseStats.p90} stroke="#f59e0b" strokeDasharray="3 3" />
+                  <Legend iconSize={8} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-600">No expense distribution</div>
+            )}
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
               <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Expense Count</p>
-              <p className="text-sm font-black text-slate-100">{expenseStats.count}</p>
+              <p className="text-sm font-black text-slate-100">{activeExpenseStats.count}</p>
             </div>
             <div className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
               <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Average Expense</p>
-              <p className="text-sm font-black text-slate-100">{formatMoney(expenseStats.avg)}</p>
+              <p className="text-sm font-black text-slate-100">{formatMoney(activeExpenseStats.avg)}</p>
             </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {activeExpenseQuantiles.map(bucket => (
+              <span key={bucket.label} className="text-[9px] uppercase tracking-widest px-2 py-1 rounded-full border border-slate-800 text-slate-400">
+                <span className="font-bold" style={{ color: bucket.color }}>{bucket.label}</span> {formatMoney(bucket.value)}
+              </span>
+            ))}
           </div>
         </WidgetCard>
       </div>
