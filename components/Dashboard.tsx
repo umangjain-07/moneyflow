@@ -603,6 +603,7 @@ export const Dashboard: React.FC = () => {
                           <input
                               type="date"
                               className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                                  style={{ colorScheme: 'dark' }}
                               value={customRange.start}
                               onChange={(e) => {
                                   setPickedMonth('');
@@ -615,6 +616,7 @@ export const Dashboard: React.FC = () => {
                           <input
                               type="date"
                               className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                                  style={{ colorScheme: 'dark' }}
                               value={customRange.end}
                               onChange={(e) => {
                                   setPickedMonth('');
@@ -627,6 +629,7 @@ export const Dashboard: React.FC = () => {
                           <input
                               type="month"
                               className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                                  style={{ colorScheme: 'dark' }}
                               value={pickedMonth}
                               onChange={(e) => {
                                   setCustomRange({ start: '', end: '' });

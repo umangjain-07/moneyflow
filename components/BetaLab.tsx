@@ -326,25 +326,6 @@ export const BetaLab: React.FC = () => {
     expenseCount: number;
   };
 
-  const buildRollingSeries = (series: DailyEntry[], shortWindow = 7, longWindow = 30) =>
-    series.map((entry, idx) => {
-      const shortSlice = series.slice(Math.max(0, idx - shortWindow + 1), idx + 1);
-      const longSlice = series.slice(Math.max(0, idx - longWindow + 1), idx + 1);
-      const net7 = shortSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, shortSlice.length);
-      const net30 = longSlice.reduce((sum, d) => sum + d.net, 0) / Math.max(1, longSlice.length);
-      const exp7 = shortSlice.reduce((sum, d) => sum + d.expense, 0) / Math.max(1, shortSlice.length);
-      return { ...entry, net7, net30, exp7 };
-    });
-
-  const buildHeatmapCells = (series: DailyEntry[]) => {
-    const maxAbs = Math.max(1, ...series.map(d => Math.abs(d.net)));
-    return series.map(entry => {
-      const intensity = Math.min(1, Math.abs(entry.net) / maxAbs);
-      const alpha = 0.15 + intensity * 0.6;
-      const color = entry.net >= 0 ? `rgba(16, 185, 129, ${alpha})` : `rgba(244, 63, 94, ${alpha})`;
-      return { ...entry, color, intensity };
-    });
-  };
 
   const dailySeries = useMemo<DailyEntry[]>(() => {
     const start = new Date(rangeInfo.startKey);
@@ -395,21 +376,10 @@ export const BetaLab: React.FC = () => {
     return Array.from(map.values());
   }, [rangeInfo.startKey, rangeInfo.endKey, rangeTxs, accounts, settings.currency]);
 
-  const rollingSeries = useMemo(() => buildRollingSeries(dailySeries), [dailySeries]);
-
   const monthTxs = useMemo(
     () => (selectedMonthKey ? rangeTxs.filter(t => t.date.startsWith(selectedMonthKey)) : []),
     [rangeTxs, selectedMonthKey]
   );
-
-  const monthDailySeries = useMemo(
-    () => (selectedMonthKey ? dailySeries.filter(day => day.key.startsWith(selectedMonthKey)) : []),
-    [dailySeries, selectedMonthKey]
-  );
-
-  const monthRollingSeries = useMemo(() => buildRollingSeries(monthDailySeries), [monthDailySeries]);
-  const heatmapCells = useMemo(() => buildHeatmapCells(dailySeries), [dailySeries]);
-  const monthHeatmapCells = useMemo(() => buildHeatmapCells(monthDailySeries), [monthDailySeries]);
 
   const percentile = (values: number[], p: number) => {
     if (values.length === 0) return 0;
@@ -741,21 +711,10 @@ export const BetaLab: React.FC = () => {
   const goalHint = goalTotals.target > 0
     ? `${formatMoney(goalTotals.current)} / ${formatMoney(goalTotals.target)}`
     : 'No goal targets yet';
-  const dailyTickInterval = Math.max(1, Math.floor(rollingSeries.length / 8));
-  const monthDailyTickInterval = Math.max(1, Math.floor(monthRollingSeries.length / 8));
-  const activeDailyTickInterval = transactionView === 'MONTH' ? monthDailyTickInterval : dailyTickInterval;
-  const activeRollingSeries = transactionView === 'MONTH' ? monthRollingSeries : rollingSeries;
-  const activeHeatmapCells = transactionView === 'MONTH' ? monthHeatmapCells : heatmapCells;
   const activeExpenseDistribution = transactionView === 'MONTH' ? monthExpenseDistribution : expenseDistribution;
   const activeExpenseStats = transactionView === 'MONTH' ? monthExpenseStats : expenseStats;
   const activeExpenseQuantiles = transactionView === 'MONTH' ? monthExpenseQuantiles : expenseQuantiles;
   const activeLedgerRows = transactionView === 'MONTH' ? (monthLedgerRow ? [monthLedgerRow] : []) : monthlyLedger;
-  const dailyPulseTitle = transactionView === 'MONTH'
-    ? `Daily Pulse (Net + Rolling · ${selectedMonthLabel})`
-    : 'Daily Pulse (Net + Rolling)';
-  const heatmapTitle = transactionView === 'MONTH'
-    ? `Net Heatmap (${selectedMonthLabel})`
-    : 'Net Heatmap (Daily)';
   const ledgerTitle = transactionView === 'MONTH'
     ? `Ledger Snapshot (${selectedMonthLabel})`
     : 'Ledger Grid (Monthly)';
@@ -808,6 +767,7 @@ export const BetaLab: React.FC = () => {
               <input
                 type="date"
                 className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                style={{ colorScheme: 'dark' }}
                 value={customRange.start}
                 onChange={(e) => {
                   setPickedMonth('');
@@ -820,6 +780,7 @@ export const BetaLab: React.FC = () => {
               <input
                 type="date"
                 className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                style={{ colorScheme: 'dark' }}
                 value={customRange.end}
                 onChange={(e) => {
                   setPickedMonth('');
@@ -832,6 +793,7 @@ export const BetaLab: React.FC = () => {
               <input
                 type="month"
                 className="bg-transparent text-slate-200 text-xs font-bold outline-none"
+                style={{ colorScheme: 'dark' }}
                 value={pickedMonth}
                 onChange={(e) => {
                   setCustomRange({ start: '', end: '' });
@@ -938,63 +900,6 @@ export const BetaLab: React.FC = () => {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WidgetCard id="DAILY-01" title={dailyPulseTitle} icon={Activity} accent="#22d3ee">
-          <div className="h-[260px]">
-            {activeRollingSeries.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={activeRollingSeries}>
-                  <defs>
-                    <linearGradient id="dailyNetGlow" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    interval={activeDailyTickInterval}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
-                  />
-                  <YAxis tickFormatter={formatCompact} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
-                    formatter={(val: any, name?: string) => [formatMoney(Number(val)), name || 'Value']}
-                  />
-                  <Bar dataKey="expense" name="Expense" fill="#f43f5e" opacity={0.35} />
-                  <Area dataKey="net" name="Net" stroke="#22d3ee" fill="url(#dailyNetGlow)" strokeWidth={2} connectNulls />
-                  <Line dataKey="net7" name="Net 7D" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
-                  <Line dataKey="net30" name="Net 30D" stroke="#a855f7" strokeWidth={1.2} dot={false} strokeDasharray="4 4" />
-                  <Legend iconSize={8} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-600">No daily data</div>
-            )}
-          </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">Bars show daily spend; lines show net and rolling averages.</p>
-        </WidgetCard>
-
-        <WidgetCard id="HEAT-01" title={heatmapTitle} icon={Sparkles} accent="#10b981">
-          <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-1">
-            {activeHeatmapCells.map(cell => (
-              <div
-                key={cell.key}
-                className="h-5 rounded-sm border border-slate-900/70"
-                style={{ backgroundColor: cell.color }}
-                title={`${cell.key} | Net ${formatMoney(cell.net)} | Tx ${cell.txCount}`}
-              />
-            ))}
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500 uppercase tracking-widest">
-            <span>Negative to Positive Net</span>
-            <span>{activeHeatmapCells.length} days</span>
-          </div>
-        </WidgetCard>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -397,6 +397,7 @@ export const Reports: React.FC = () => {
                     value={pickedMonth}
                     onChange={(e) => setPickedMonth(e.target.value)}
                     className="bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-xl py-2 px-3 outline-none"
+                    style={{ colorScheme: 'dark' }}
                 />
             )}
             {timeRange === 'CUSTOM_RANGE' && (
@@ -406,12 +407,14 @@ export const Reports: React.FC = () => {
                         value={customStart}
                         onChange={(e) => setCustomStart(e.target.value)}
                         className="bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-xl py-2 px-3 outline-none w-32"
+                        style={{ colorScheme: 'dark' }}
                     />
                     <input 
                         type="date" 
                         value={customEnd}
                         onChange={(e) => setCustomEnd(e.target.value)}
                         className="bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-xl py-2 px-3 outline-none w-32"
+                        style={{ colorScheme: 'dark' }}
                     />
                 </div>
             )}
@@ -470,7 +473,7 @@ export const Reports: React.FC = () => {
       <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800 animate-slide-up" style={{animationDelay: '400ms'}}>
           <div className="flex justify-between items-center mb-6">
               <h3 className="text-white font-semibold flex items-center gap-2">
-                  <Calendar size={18} className="text-blue-400" /> Daily Financial Pulse
+                  <Calendar size={18} className="text-white" /> Daily Financial Pulse
               </h3>
               <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
                    <button 

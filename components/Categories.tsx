@@ -127,12 +127,12 @@ export const Categories: React.FC = () => {
     if (analysisTarget.type === 'CATEGORY') {
         const cat = categories.find(c => c.id === analysisTarget.id);
         if (!cat) return null;
-        dataTxs = transactions.filter(t => t.categoryId === cat.id);
+        dataTxs = transactions.filter(t => t.categoryId === cat.id && t.type !== 'GOAL');
         name = cat.name; color = cat.color || '#3b82f6'; icon = cat.icon || '🏷️';
     } else {
         const groupCats = categories.filter(c => c.group === analysisTarget.name);
         const ids = groupCats.map(c => c.id);
-        dataTxs = transactions.filter(t => ids.includes(t.categoryId));
+        dataTxs = transactions.filter(t => ids.includes(t.categoryId) && t.type !== 'GOAL');
         name = analysisTarget.name + " (Group)"; color = '#6366f1'; icon = '📂';
     }
 

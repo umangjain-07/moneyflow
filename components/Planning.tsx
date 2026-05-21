@@ -529,6 +529,7 @@ export const Planning: React.FC = () => {
                           <input 
                             type="date" 
                             className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-indigo-500/50"
+                                                        style={{ colorScheme: 'dark' }}
                             value={conf.renewalDate || ''}
                             onChange={(e) => handleConfigChange(conf.categoryId, 'renewalDate', e.target.value)}
                           />
@@ -1351,7 +1352,7 @@ export const Planning: React.FC = () => {
                     <div className="flex-1 bg-[#0f172a] rounded-2xl border border-slate-800 flex flex-col shadow-xl overflow-hidden min-h-0">
                         <div className="p-4 border-b border-slate-800 bg-slate-900/50">
                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
-                                <CalendarRange size={14} className="text-indigo-400"/> Timeline Assignment
+                                <CalendarRange size={14} className="text-white"/> Timeline Assignment
                             </h3>
                             <p className="text-[10px] text-slate-500">
                                 Apply this plan to past or future months.

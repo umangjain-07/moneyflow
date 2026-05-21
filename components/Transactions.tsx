@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, subscribe } from '../services/storage';
 import { Transaction, Category, Account, TransactionType, Goal } from '../types';
-import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, Calendar, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown, Target, Activity } from 'lucide-react';
+import { Plus, Trash2, ArrowUpRight, ArrowDownLeft, Search, Filter, Tag, Heart, Coffee, CreditCard, TrendingUp, X, Edit2, Check, ChevronDown, ChevronLeft, ChevronRight, Target, Activity, Sparkles } from 'lucide-react';
 import {
   ResponsiveContainer,
   XAxis,
@@ -45,6 +45,8 @@ const TransactionItem: React.FC<{
         return <ArrowUpRight size={16} />;
     };
 
+    const iconNode = tx.type === 'GOAL' ? getIcon() : (category?.icon ? category.icon : getIcon());
+
     const getColorClass = () => {
       if (tx.type === 'GOAL') return 'bg-amber-500/10 text-amber-400';
         if (tx.type === 'INCOME') return 'bg-emerald-500/10 text-emerald-500';
@@ -67,8 +69,8 @@ const TransactionItem: React.FC<{
               style={{animationDelay: `${Math.min(index * 30, 500)}ms`, opacity: 0}}
           >
               <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg flex items-center justify-center text-base ${getColorClass()}`}>
-                      {category?.icon ? category.icon : getIcon()}
+                    <div className={`p-2 rounded-lg flex items-center justify-center text-base ${getColorClass()}`}>
+                      {iconNode}
                   </div>
                   <div className="flex flex-col">
                       <p className="font-bold text-slate-200 text-sm truncate max-w-[140px] leading-tight">{tx.description}</p>
@@ -158,9 +160,20 @@ export const Transactions: React.FC = () => {
   // Filters
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
-  const [filterStartDate, setFilterStartDate] = useState<string>('');
-  const [filterEndDate, setFilterEndDate] = useState<string>('');
-  const [filterMonth, setFilterMonth] = useState<string>('');
+  const [filterStartDate, setFilterStartDate] = useState<string>(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  });
+  const [filterEndDate, setFilterEndDate] = useState<string>(() => {
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+  });
+  const [filterMonth, setFilterMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -205,6 +218,28 @@ export const Transactions: React.FC = () => {
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+  };
+  const applyMonthFilter = (monthValue: string) => {
+    setFilterMonth(monthValue);
+    if (!monthValue) {
+      setFilterStartDate('');
+      setFilterEndDate('');
+      return;
+    }
+    const [year, month] = monthValue.split('-').map(Number);
+    if (!year || !month) return;
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    setFilterStartDate(formatDateKey(start));
+    setFilterEndDate(formatDateKey(end));
+  };
+  const shiftMonth = (offset: number) => {
+    const base = filterMonth || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const [year, month] = base.split('-').map(Number);
+    if (!year || !month) return;
+    const next = new Date(year, month - 1 + offset, 1);
+    const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    applyMonthFilter(nextKey);
   };
   const formatDayLabel = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const formatMonthLabel = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
@@ -309,7 +344,7 @@ export const Transactions: React.FC = () => {
           amount: String(tx.amount),
           description: tx.description,
           date: tx.date,
-          categoryId: tx.categoryId,
+          categoryId: tx.type === 'GOAL' ? 'goal_feed' : tx.categoryId,
           accountId: tx.accountId,
           toAccountId: toAcc,
           tags: tx.tags?.join(', ') || '',
@@ -380,14 +415,11 @@ export const Transactions: React.FC = () => {
           hasGoalContribution = true;
       }
 
-      let catId = formData.categoryId;
-      if (!catId) {
-          if (mode === 'GOAL') catId = 'goal_feed';
-          else {
-              const defaults = categories.filter(c => c.type === mode);
-              catId = defaults[0]?.id;
-          }
-      }
+        let catId = mode === 'GOAL' ? 'goal_feed' : formData.categoryId;
+        if (!catId) {
+          const defaults = categories.filter(c => c.type === mode);
+          catId = defaults[0]?.id;
+        }
 
       const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
 
@@ -431,7 +463,9 @@ export const Transactions: React.FC = () => {
                           t.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
     
     const matchesType = filterType === 'ALL' || t.type === filterType;
-    const matchesCategory = filterCategory === 'ALL' || t.categoryId === filterCategory;
+    const effectiveCategoryId = t.type === 'GOAL' ? 'goal_feed' : t.categoryId;
+    const matchesCategory = filterCategory === 'ALL'
+      || (filterCategory === 'goal_feed' ? t.type === 'GOAL' : effectiveCategoryId === filterCategory);
     const matchesDate = (!filterStartDate || t.date >= filterStartDate) && (!filterEndDate || t.date <= filterEndDate);
 
     return matchesSearch && matchesType && matchesCategory && matchesDate;
@@ -446,6 +480,7 @@ export const Transactions: React.FC = () => {
     investment: number;
     goals: number;
     net: number;
+    txCount: number;
   };
 
   const buildDailySeriesRange = (startKey: string, endKey: string, txs: Transaction[]) => {
@@ -466,7 +501,8 @@ export const Transactions: React.FC = () => {
         expense: 0,
         investment: 0,
         goals: 0,
-        net: 0
+        net: 0,
+        txCount: 0
       });
       cursor.setDate(cursor.getDate() + 1);
     }
@@ -478,6 +514,7 @@ export const Transactions: React.FC = () => {
       const currency = getAccountCurrency(t.accountId);
       const rawAmount = t.type === 'EXPENSE' ? Math.max(0, t.amount - (t.sponsoredAmount || 0)) : t.amount;
       const amount = db.convertAmount(rawAmount, currency, settings.currency);
+      entry.txCount += 1;
 
       if (t.type === 'INCOME') entry.income += amount;
       if (t.type === 'EXPENSE') entry.expense += amount;
@@ -490,6 +527,17 @@ export const Transactions: React.FC = () => {
     });
 
     return Array.from(map.values());
+  };
+
+  const buildHeatmapCells = (series: DailyEntry[]) => {
+    if (series.length === 0) return [] as Array<DailyEntry & { color: string; intensity: number }>;
+    const maxAbs = Math.max(1, ...series.map(d => Math.abs(d.net)));
+    return series.map(entry => {
+      const intensity = Math.min(1, Math.abs(entry.net) / maxAbs);
+      const alpha = 0.15 + intensity * 0.6;
+      const color = entry.net >= 0 ? `rgba(16, 185, 129, ${alpha})` : `rgba(244, 63, 94, ${alpha})`;
+      return { ...entry, color, intensity };
+    });
   };
 
   const buildDailySeries = (monthKey: string, txs: Transaction[]) => {
@@ -557,7 +605,11 @@ export const Transactions: React.FC = () => {
   );
 
   const overallRollingSeries = useMemo(() => buildRollingSeries(overallDailySeries), [overallDailySeries]);
+  const overallHeatmapCells = useMemo(() => buildHeatmapCells(overallDailySeries), [overallDailySeries]);
+  const monthHeatmapCells = useMemo(() => buildHeatmapCells(monthDailySeries), [monthDailySeries]);
+
   const activeRollingSeries = filterMonth ? monthRollingSeries : overallRollingSeries;
+  const activeHeatmapCells = filterMonth ? monthHeatmapCells : overallHeatmapCells;
   const dailyTickInterval = Math.max(1, Math.floor(activeRollingSeries.length / 8));
   const overallRangeLabel = useMemo(() => {
     if (!overallRange.start || !overallRange.end) return 'All time';
@@ -616,6 +668,7 @@ export const Transactions: React.FC = () => {
                     className="w-full appearance-none bg-slate-950 border border-slate-800 text-slate-300 rounded-xl py-2 pl-3 pr-8 outline-none focus:border-emerald-500/50 text-xs font-bold uppercase tracking-wide cursor-pointer"
                   >
                       <option value="ALL">All Categories</option>
+                        <option value="goal_feed">Goals</option>
                       {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"/>
@@ -625,6 +678,7 @@ export const Transactions: React.FC = () => {
                   <input 
                     type="date" 
                     className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
+                    style={{ colorScheme: 'dark' }}
                     value={filterStartDate}
                     onChange={e => {
                       setFilterMonth('');
@@ -635,6 +689,7 @@ export const Transactions: React.FC = () => {
                   <input 
                     type="date" 
                     className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-24 p-1"
+                    style={{ colorScheme: 'dark' }}
                     value={filterEndDate}
                     onChange={e => {
                       setFilterMonth('');
@@ -644,26 +699,34 @@ export const Transactions: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-2">
+                  <button
+                    onClick={() => shiftMonth(-1)}
+                    className="p-1 text-slate-400 hover:text-slate-200 transition-colors"
+                    title="Previous month"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
                   <input
                     type="month"
                     className="bg-transparent text-slate-300 outline-none text-xs font-bold uppercase w-28 p-1"
+                    style={{ colorScheme: 'dark' }}
                     value={filterMonth}
-                    onChange={e => {
-                      const value = e.target.value;
-                      setFilterMonth(value);
-                      if (!value) {
-                        setFilterStartDate('');
-                        setFilterEndDate('');
-                        return;
-                      }
-                      const [year, month] = value.split('-').map(Number);
-                      if (!year || !month) return;
-                      const start = new Date(year, month - 1, 1);
-                      const end = new Date(year, month, 0);
-                      setFilterStartDate(formatDateKey(start));
-                      setFilterEndDate(formatDateKey(end));
-                    }}
+                    onChange={e => applyMonthFilter(e.target.value)}
                   />
+                  <button
+                    onClick={() => shiftMonth(1)}
+                    className="p-1 text-slate-400 hover:text-slate-200 transition-colors"
+                    title="Next month"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                  <button
+                    onClick={() => applyMonthFilter('')}
+                    className="px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-200 transition-colors"
+                    title="All transactions"
+                  >
+                    All
+                  </button>
               </div>
               
               {(filterType !== 'ALL' || filterCategory !== 'ALL' || filterStartDate || filterEndDate || filterMonth) && (
@@ -678,51 +741,79 @@ export const Transactions: React.FC = () => {
           </div>
       </div>
 
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2 text-slate-200 text-sm font-bold">
-            <span className="p-2 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400">
-              <Activity size={14} />
-            </span>
-            <span>Daily Pulse (Net + Rolling)</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 text-slate-200 text-sm font-bold">
+              <span className="p-2 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400">
+                <Activity size={14} />
+              </span>
+              <span>Daily Pulse (Net + Rolling)</span>
+            </div>
+            <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{pulseScopeLabel}</span>
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{pulseScopeLabel}</span>
+          <div className="h-[220px]">
+            {activeRollingSeries.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={activeRollingSeries}>
+                  <defs>
+                    <linearGradient id="txDailyNetGlow" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    interval={dailyTickInterval}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
+                  />
+                  <YAxis tickFormatter={formatCompact} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
+                    formatter={(val: any, name?: string) => [formatMoney(Number(val)), name || 'Value']}
+                  />
+                  <Bar dataKey="expense" name="Expense" fill="#f43f5e" opacity={0.35} />
+                  <Area dataKey="net" name="Net" stroke="#22d3ee" fill="url(#txDailyNetGlow)" strokeWidth={2} connectNulls />
+                  <Line dataKey="net7" name="Net 7D" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
+                  <Line dataKey="net30" name="Net 30D" stroke="#a855f7" strokeWidth={1.2} dot={false} strokeDasharray="4 4" />
+                  <Legend iconSize={8} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-600">No daily data</div>
+            )}
+          </div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">Bars show daily spend; lines show net and rolling averages.</p>
         </div>
-        <div className="h-[220px]">
-          {activeRollingSeries.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={activeRollingSeries}>
-                <defs>
-                  <linearGradient id="txDailyNetGlow" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.25} />
-                    <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis
-                  dataKey="label"
-                  interval={dailyTickInterval}
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }}
-                />
-                <YAxis tickFormatter={formatCompact} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 9, fontWeight: 700 }} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}
-                  formatter={(val: any, name?: string) => [formatMoney(Number(val)), name || 'Value']}
-                />
-                <Bar dataKey="expense" name="Expense" fill="#f43f5e" opacity={0.35} />
-                <Area dataKey="net" name="Net" stroke="#22d3ee" fill="url(#txDailyNetGlow)" strokeWidth={2} connectNulls />
-                <Line dataKey="net7" name="Net 7D" stroke="#38bdf8" strokeWidth={1.5} dot={false} />
-                <Line dataKey="net30" name="Net 30D" stroke="#a855f7" strokeWidth={1.2} dot={false} strokeDasharray="4 4" />
-                <Legend iconSize={8} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full flex items-center justify-center text-slate-600">No daily data</div>
-          )}
+
+        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 text-slate-200 text-sm font-bold">
+              <span className="p-2 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400">
+                <Sparkles size={14} />
+              </span>
+              <span>Net Heatmap</span>
+            </div>
+            <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{pulseScopeLabel}</span>
+          </div>
+          <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-1">
+            {activeHeatmapCells.map(cell => (
+              <div
+                key={cell.key}
+                className="h-5 rounded-sm border border-slate-900/70"
+                style={{ backgroundColor: cell.color }}
+                title={`${cell.key} | Net ${formatMoney(cell.net)} | Tx ${cell.txCount}`}
+              />
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500 uppercase tracking-widest">
+            <span>Negative to Positive Net</span>
+            <span>{activeHeatmapCells.length} days</span>
+          </div>
         </div>
-        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-3">Bars show daily spend; lines show net and rolling averages.</p>
       </div>
 
       <div className="hidden md:block bg-slate-900/50 backdrop-blur-md rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
@@ -807,7 +898,7 @@ export const Transactions: React.FC = () => {
                   </div>
                   <div className="w-1/3">
                     <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Execution</label>
-                    <input type="date" className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-2xl p-4 outline-none shadow-inner text-xs font-bold" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+                    <input type="date" className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-2xl p-4 outline-none shadow-inner text-xs font-bold" style={{ colorScheme: 'dark' }} value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
                   </div>
               </div>
 
