@@ -46,10 +46,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     console.error("Uncaught error:", error, errorInfo);
   }
 
-  handleReset = () => {
-    // Hard reset
-    localStorage.clear();
-    window.location.reload();
+  handleReset = async () => {
+    try {
+      await db.resetEverything();
+    } finally {
+      window.location.reload();
+    }
   }
 
   render() {

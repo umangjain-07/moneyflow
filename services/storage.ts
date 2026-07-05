@@ -1142,7 +1142,10 @@ class StorageService {
           email: profile.email as string | undefined
       }; 
   }
-  getSettings() { return this.get<AppSettings>('settings', DEFAULT_SETTINGS); }
+    getSettings() {
+            if (!this.getSession()) return { ...DEFAULT_SETTINGS };
+            return this.get<AppSettings>('settings', DEFAULT_SETTINGS);
+    }
   updateSettings(s: Partial<AppSettings>) { 
       const cur = this.getSettings(); 
       const upd = { ...cur, ...s, updatedAt: new Date().toISOString() };
@@ -1367,24 +1370,39 @@ class StorageService {
       this.set('plan', { ...p, updatedAt: new Date().toISOString() }); 
   }
 
-  async resetEverything() { 
-      const session = this.getSession();
-      const keys = ['settings', 'accounts', 'categories', 'transactions', 'goals', 'importRules', 'plan'];
-      
-      keys.forEach(k => {
-          try { localStorage.removeItem(this.k(k)); } catch(e){}
-      });
-      
-      if (session && this.dbPromise) {
-          const db = await this.dbPromise;
-          const tx = db.transaction('store', 'readwrite');
-          keys.forEach(k => {
-             try { tx.store.delete(`user_${session}_${k}`); } catch(e){}
-          });
-          await tx.done;
-      }
+  async resetEverything() {
+      this.cleanupRealtimeSync();
+      this.pendingLocalChanges = {};
+      this.editingKeys.clear();
       this.memoryCache = {};
-      notify(); 
+      this.syncStatus = 'IDLE';
+
+      try {
+          localStorage.clear();
+      } catch (e) {}
+
+      if (this.dbPromise) {
+          try {
+              const db = await this.dbPromise;
+              db.close();
+          } catch (e) {}
+          this.dbPromise = null;
+      }
+
+      try {
+          await new Promise<void>((resolve) => {
+              const request = indexedDB.deleteDatabase('moneyflow_db');
+              request.onsuccess = () => resolve();
+              request.onerror = () => resolve();
+              request.onblocked = () => resolve();
+          });
+      } catch (e) {}
+
+      try {
+          localStorage.removeItem('moneyflow_session');
+      } catch (e) {}
+
+      notify();
   }
 
   getHistory(months: number | 'ALL'): any[] {

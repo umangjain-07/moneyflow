@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { db, subscribe, getEnv } from '../services/storage';
 import { FinancialHealth, Category, Goal, Transaction, Account, AiInsight } from '../types';
 import { TrendingUp, TrendingDown, Wallet, ShieldCheck, Lightbulb, Target, Plus, Trash2, Calendar, AlertTriangle, CheckCircle2, ArrowRight, Coffee, Activity, Zap, Info, Sparkles, BrainCircuit, Lock, Shield, Award, Edit2, PieChart as PieIcon } from 'lucide-react';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, LineChart as RechartsLineChart, Line } from 'recharts';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, LineChart as RechartsLineChart, Line, ReferenceLine } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 
 const CustomTooltip = ({ active, payload, label, currencySymbol }: any) => {
@@ -449,9 +449,13 @@ export const Dashboard: React.FC = () => {
           needs: 0,
           wants: 0,
           investment: 0,
-          savings: 0
+          goals: 0,
+          savings: 0,
+          savingsTarget: 0,
+          endNetWorth: 0
       }));
       const byMonth = new Map(entries.map(entry => [entry.date, entry]));
+      const savingsGoalPercent = settings.savingsGoalPercent || 20;
 
       transactions.forEach(t => {
           const key = t.date.substring(0, 7);
@@ -469,6 +473,8 @@ export const Dashboard: React.FC = () => {
               entry.income += amount;
           } else if (t.type === 'INVESTMENT') {
               entry.investment += amount;
+          } else if (t.type === 'GOAL') {
+              entry.goals += amount;
           } else if (t.type === 'EXPENSE') {
               const cat = categories.find(c => c.id === t.categoryId);
               if (cat?.necessity === 'NEED') entry.needs += amount;
@@ -476,9 +482,14 @@ export const Dashboard: React.FC = () => {
           }
       });
 
+      let cumulativeGoalFlow = 0;
       entries.forEach(entry => {
-          const outflow = entry.needs + entry.wants + entry.investment;
+          const outflow = entry.needs + entry.wants + entry.investment + entry.goals;
           entry.savings = entry.income - outflow;
+          entry.savingsTarget = entry.income * (savingsGoalPercent / 100);
+          cumulativeGoalFlow += entry.goals;
+          const baseNetWorth = rangeHistory.find(historyEntry => historyEntry.date === entry.date)?.endNetWorth || 0;
+          entry.endNetWorth = Math.max(0, baseNetWorth - cumulativeGoalFlow);
       });
 
       return entries;
@@ -488,6 +499,7 @@ export const Dashboard: React.FC = () => {
 
     const freeLiquid = health.freeLiquidAssets ?? health.liquidAssets;
     const goalLocked = health.goalLockedAssets || 0;
+        const adjustedNetWorth = Math.max(0, health.netWorth - goalLocked);
     const liquidPct = health.netWorth > 0 ? (freeLiquid / health.netWorth) * 100 : 0;
     const goalPct = health.netWorth > 0 ? (goalLocked / health.netWorth) * 100 : 0;
   const investedPct = health.netWorth > 0 ? (health.investedAssets / health.netWorth) * 100 : 0;
@@ -503,7 +515,7 @@ export const Dashboard: React.FC = () => {
                     <p className="text-slate-400 font-medium text-sm tracking-wide uppercase">Financial Net Worth</p>
                   </div>
                   <h1 className="text-5xl md:text-7xl font-bold text-white tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-500">
-                      {formatMoney(health.netWorth)}
+                      {formatMoney(adjustedNetWorth)}
                   </h1>
                   
                   {/* ASSET BREAKDOWN PROGRESS BAR */}
@@ -923,6 +935,7 @@ export const Dashboard: React.FC = () => {
                             <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]"></div> Needs</div>
                             <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"></div> Wants</div>
                             <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-purple-500 shadow-[0_0_8px_rgba(139,92,246,0.4)]"></div> Invest</div>
+                            <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-rose-400 shadow-[0_0_8px_rgba(248,113,113,0.4)]"></div> Goals</div>
                         </div>
                     ) : cashFlowMode === 'SAVINGS' ? (
                         <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-tighter">
@@ -944,10 +957,12 @@ export const Dashboard: React.FC = () => {
                                 <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
                                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
                                 <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{fill: '#1e293b', opacity: 0.2}} />
+                                <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" />
                                 <Bar dataKey="income" name="Income" fill="#10b981" radius={[4, 4, 0, 0]} minPointSize={3} animationDuration={1000} />
                                 <Bar dataKey="needs" name="Needs" stackId="out" fill="#38bdf8" minPointSize={3} animationDuration={1200} />
                                 <Bar dataKey="wants" name="Wants" stackId="out" fill="#f59e0b" minPointSize={3} animationDuration={1300} />
                                 <Bar dataKey="investment" name="Investment" stackId="out" fill="#8b5cf6" radius={[4, 4, 0, 0]} minPointSize={3} animationDuration={1400} />
+                                <Bar dataKey="goals" name="Goals" stackId="out" fill="#f87171" minPointSize={3} animationDuration={1500} />
                             </BarChart>
                         ) : cashFlowMode === 'SAVINGS' ? (
                             <RechartsLineChart data={cashFlowData} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
@@ -955,10 +970,12 @@ export const Dashboard: React.FC = () => {
                                 <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
                                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
                                 <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} />
+                                <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" />
+                                <Line type="monotone" dataKey="savingsTarget" name="Savings Target" stroke="#f59e0b" strokeWidth={1.75} dot={false} strokeDasharray="5 5" />
                                 <Line type="monotone" dataKey="savings" name="Savings" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3, fill: '#22d3ee' }} activeDot={{ r: 5 }} />
                             </RechartsLineChart>
                         ) : (
-                            <AreaChart data={rangeHistory} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
+                            <AreaChart data={cashFlowData} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
                                 <defs>
                                     <linearGradient id="cashFlowNetWorth" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
@@ -969,6 +986,7 @@ export const Dashboard: React.FC = () => {
                                 <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} padding={{ left: 10, right: 14 }} />
                                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 11, fontWeight: 700}} tickFormatter={(val) => `${val/1000}k`} />
                                 <RechartsTooltip content={<CustomTooltip currencySymbol={settings.currencySymbol} />} cursor={{stroke: '#3b82f6', strokeWidth: 1.5}} />
+                                <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" />
                                 <Area type="monotone" dataKey="endNetWorth" name="Net Worth" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#cashFlowNetWorth)" animationDuration={1600} dot={{ r: 2 }} />
                             </AreaChart>
                         )}

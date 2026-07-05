@@ -334,8 +334,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <button 
                         onClick={() => { 
                             if(confirm('Are you absolutely sure? This will wipe ALL your data and cannot be undone.')) {
-                                db.resetEverything(); 
-                                window.location.reload();
+                          void db.resetEverything().finally(() => window.location.reload());
                             }
                         }}
                         className="w-full flex items-center justify-between p-4 bg-rose-500/5 hover:bg-rose-500/10 rounded-2xl border border-rose-500/10 transition-all group"
